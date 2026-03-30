@@ -1,0 +1,11 @@
+{% include "blocks/header.yaml.j2" %}
+
+databases:
+{% for db in databases %}
+{% include "blocks/database.yaml.j2" %}
+{% endfor %}
+
+services:
+{% for service in services %}
+{% include "blocks/service.yaml.j2" %}
+{% endfor %}

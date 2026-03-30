@@ -10,20 +10,90 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "python": "${workspaceFolder}/cli/.venv/bin/python",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "jinja": true
         },
         {
-            "name": "Python-Debugger: Modul",
+            "name": "Python-Debugger: supervisor",
             "type": "debugpy",
             "request": "launch",
             "module": "admin_helper_cli",
-            "python": "${workspaceFolder}/cli/.venv/bin/python",
+            "python": "${workspaceFolder}/.venv/bin/python",
             "args": [
-                "services",
+                "supervisor",
+            ],
+            "jinja": true
+        },
+        {
+            "name": "Python-Debugger: Traefik",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "admin_helper_cli",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "args": [
                 "traefik",
-                // "dashboard"
-                // "settings"
-            ]
+            ],
+            "jinja": true
+        },
+        {
+            "name": "Python-Debugger: Dashboard",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "admin_helper_cli",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "args": [
+                "dashboard",
+            ],
+            "jinja": true
+        },
+        {
+            "name": "Python-Debugger: settings",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "admin_helper_cli",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "args": [
+                "settings"
+            ],
+            "jinja": true
+        },
+        {
+            "name": "Python-Debugger: module list",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "admin_helper_cli",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "args": [
+                "module",
+                "list",
+            ],
+            "jinja": true
+        },
+        {
+            "name": "Python-Debugger: module ttyd run",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "admin_helper_cli",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "args": [
+                "module",
+                "ttyd",
+                "run"
+            ],
+            "jinja": true
+        },
+        {
+            "name": "Python-Debugger: module filebrowser run",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "admin_helper_cli",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "args": [
+                "module",
+                "filebrowser",
+                "run"
+            ],
+            "jinja": true
         }
     ]
 }

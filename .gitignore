@@ -1,2 +1,3 @@
-/.idea/
-/cli/tmp/
+.venv/
+*.pyc
+__pycache__/

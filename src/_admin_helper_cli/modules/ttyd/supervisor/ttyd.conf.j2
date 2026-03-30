@@ -1,0 +1,5 @@
+[program:ttyd]
+stdout_logfile=/dev/fd/1
+stdout_logfile_maxbytes=0
+redirect_stderr=true
+command={{ admin_help_cli_cmd }} module ttyd run
