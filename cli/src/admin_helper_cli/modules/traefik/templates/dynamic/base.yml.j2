@@ -1,0 +1,14 @@
+http:
+  routers:
+    traefik-http:
+      rule: PathPrefix(`/api`) || PathPrefix(`/dashboard`)
+      middlewares:
+        - auth-basic
+      service: api@internal
+      entryPoints:
+        - http
+
+  middlewares:
+    auth-basic:
+      basicAuth:
+        usersFile: /opt/traefik/dynamic/.htpasswd

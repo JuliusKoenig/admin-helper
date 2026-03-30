@@ -1,0 +1,22 @@
+http:
+  routers:
+    filebrowser-http:
+      rule: PathPrefix(`/files`)
+      middlewares:
+        - filebrowser-auth
+        - auth-basic
+      service: filebrowser-service
+      entryPoints:
+        - http
+
+  middlewares:
+    filebrowser-auth:
+      headers:
+        customRequestHeaders:
+          X-Auth-Header: admin
+
+  services:
+    filebrowser-service:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8001"

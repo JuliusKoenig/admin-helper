@@ -1,0 +1,22 @@
+entryPoints:
+  ping:
+    address: ":8081"
+  http:
+    address: ":80"
+
+providers:
+  file:
+    directory: "/opt/traefik/dynamic"
+    watch: true
+
+api:
+  dashboard: true
+
+log:
+  level: INFO
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+accessLog: {}

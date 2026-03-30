@@ -1,0 +1,15 @@
+http:
+  routers:
+    homer-http:
+      rule: PathPrefix(`/`)
+      middlewares:
+        - auth-basic
+      service: homer-service
+      entryPoints:
+        - http
+
+  services:
+    homer-service:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8002"
