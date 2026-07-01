@@ -8,21 +8,24 @@ from typing import IO, Any
 from pydantic import Field, BaseModel, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 LOG_DIRECTORY = Path("var") / "log"
-
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ADMIN_HELPER_",
                                       env_nested_delimiter="__")
-
+    binary_directory: Path = Field(default=Path("usr/local/bin"),
+                                   title="Binary Directory",
+                                   description="The directory where binaries are stored")
     config_directory: Path = Field(default=Path("etc"),
                                    title="Config Directory",
                                    description="The config directory")
     pid_directory: Path = Field(default=Path("var/run"),
                                 title="PID Directory",
                                 description="The PID directory")
+    temp_directory: Path = Field(default=Path("tmp"),
+                                 title="Temp Directory",
+                                 description="The temp directory")
 
     class Logger(BaseModel):
         class LogLevels(str, Enum):
@@ -171,7 +174,7 @@ class Settings(BaseSettings):
 
         @property
         def log_file_path(self) -> Path:
-            return settings.config_directory / self.log_file_name
+            return LOG_DIRECTORY / self.log_file_name
 
         @property
         def sock_file_path(self) -> Path:
@@ -185,17 +188,31 @@ class Settings(BaseSettings):
                                      title="SupervisorD Settings",
                                      description="The supervisord settings")
 
-
     class Traefik(BaseModel):
+        download_url: str = Field(default="https://github.com/traefik/traefik/releases/download/v{version}/traefik_v{version}_{os}_{arch}.tar.gz",
+                                  title="Download URL to Traefik",
+                                  description="The download URL to the Traefik binary")
+        version: str = Field(...,
+                             title="Traefik Version",
+                             description="The Traefik version")
+        binary_name: str = Field(default="traefik",
+                                 title="Traefik Binary name",
+                                 description="The name of the Traefik binary")
         config_file_name: str = Field(default="traefik.conf",
-                                  title="Traefik Config File name",
-                                  description="The name of the Traefik config file")
+                                      title="Traefik Config File name",
+                                      description="The name of the Traefik config file")
 
+        @property
+        def binary_file_path(self) -> Path:
+            return settings.binary_directory / self.binary_name
+
+        @property
+        def config_file_path(self) -> Path:
+            return settings.config_directory / self.config_file_name
 
     traefik: Traefik = Field(default_factory=Traefik,
                              title="Traefik Settings",
                              description="The Traefik settings")
-
 
 
 settings = Settings()

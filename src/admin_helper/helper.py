@@ -1,10 +1,14 @@
 import os
+import platform
+import shutil
 import signal
 import subprocess
+import tarfile
 from pathlib import Path
 from typing import Union, Any
 
-from jinja2 import Environment, FileSystemLoader, select_autoescape, StrictUndefined
+from jinja2 import Environment, FileSystemLoader, StrictUndefined
+from wiederverwendbar.functions.download_file import simple_download_file
 
 from admin_helper.logger import logger
 from admin_helper.settings import settings
@@ -92,7 +96,7 @@ def render_filetree(output: Path | str,
     logger.debug(f"Filetree '{output}' rendered successfully.")
 
 
-def render_supervisord_conf() -> Path:
+def render_supervisord_conf() -> None:
     logger.debug(f"Rendering supervisord config ...")
 
     render_filetree(output=settings.config_directory,
@@ -105,18 +109,16 @@ def render_supervisord_conf() -> Path:
 
     logger.debug(f"Supervisord config rendered successfully.")
 
-    return settings.supervisord.config_file_path
 
-
-def start_supervisor(config_file: Path) -> None:
+def start_supervisor() -> None:
     logger.debug(f"Starting supervisor ...")
 
     cmd = ["supervisord",
            "-c",
-           str(config_file),
+           str(settings.supervisord.config_file_path),
            "-n"]
 
-    process = subprocess.Popen(cmd,)
+    process = subprocess.Popen(cmd, )
 
     try:
         process.wait()
@@ -125,3 +127,61 @@ def start_supervisor(config_file: Path) -> None:
         process.send_signal(signal.SIGINT)
         process.wait()
         logger.debug(f"Supervisor stopped successfully.")
+
+
+def download_traefik() -> None:
+    # get os
+    if platform.system() not in ["Linux", "Darwin", "Windows"]:
+        raise RuntimeError(f"Unsupported operating system: {platform.system()}")
+    os_name = platform.system().lower()
+
+    # get arch
+    if platform.machine() == "x86_64" or platform.machine() == "amd64":
+        arch = "amd64"
+    elif platform.machine() == "arm64" or platform.machine() == "aarch64":
+        arch = "arm64"
+    else:
+        raise RuntimeError(f"Unsupported architecture: {platform.machine()}")
+
+    # format download url
+    download_url = settings.traefik.download_url.format(
+        version=settings.traefik.version,
+        os=os_name,
+        arch=arch,
+    )
+
+    logger.debug(f"Downloading Traefik binary from '{download_url}' ...\n"
+                 f"Version: {settings.traefik.version}\n"
+                 f"OS: {os_name}\n"
+                 f"Architecture: {arch}\n")
+
+    # download binary
+    settings.temp_directory.mkdir(parents=True, exist_ok=True)
+    if not simple_download_file(download_url=download_url,
+                                local_file=settings.temp_directory / "traefik.tar.gz",
+                                overwrite=True):
+        raise RuntimeError(f"Failed to download Traefik binary from '{download_url}'")
+
+    # extract binary
+    logger.debug(f"Extracting Traefik binary to '{settings.temp_directory}' ...")
+    with tarfile.open(settings.temp_directory / "traefik.tar.gz") as tar:
+        tar.extractall(path=settings.temp_directory)
+    if not settings.temp_directory / "traefik":
+        raise RuntimeError(f"Binary not found at '{settings.temp_directory}/traefik'")
+    logger.debug(f"Traefik binary extracted successfully.")
+
+    # move binary to binary directory
+    logger.debug(f"Moving Traefik binary to '{settings.traefik.binary_file_path}' ...")
+    settings.binary_directory.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(settings.temp_directory / "traefik"), str(settings.traefik.binary_file_path))
+    settings.traefik.binary_file_path.chmod(0o755)
+
+    logger.debug(f"Traefik binary downloaded and moved successfully to '{settings.traefik.binary_file_path}'.")
+
+
+def render_traefik_conf() -> None:
+    print()
+
+
+def start_traefik() -> None:
+    print()

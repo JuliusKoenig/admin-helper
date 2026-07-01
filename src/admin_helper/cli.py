@@ -22,7 +22,25 @@ def supervisor_command() -> None:
     logger.debug(f"Starting {__title__} Daemon ...")
 
     # rendering supervisord config
-    config_file = render_supervisord_conf()
+    render_supervisord_conf()
 
     # starting supervisord
-    start_supervisor(config_file=config_file)
+    start_supervisor()
+
+@cli_app.command(name="traefik", help=f"Start the {__title__} Traefik")
+def traefik_command() -> None:
+    from admin_helper.helper import download_traefik, render_traefik_conf, start_traefik
+
+    console.rule(f"{__title__} Traefik", style="bold blue")
+    logger.debug(f"Starting {__title__} Traefik ...")
+
+    # check if traefik binary exist
+    if not settings.traefik.binary_file_path.is_file():
+        # download traefik binary
+        download_traefik()
+
+    # rendering traefik config
+    render_traefik_conf()
+
+    # starting traefik
+    start_traefik()

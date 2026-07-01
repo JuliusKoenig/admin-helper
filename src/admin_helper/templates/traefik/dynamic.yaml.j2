@@ -1,0 +1,15 @@
+http:
+  routers:
+    dashboard-http:
+      rule: PathPrefix(`/`)
+      middlewares:
+        - auth-basic
+      service: dashboard-service
+      entryPoints:
+        - http
+
+  services:
+    dashboard-service:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:{{ dashboard_settings.port }}"
