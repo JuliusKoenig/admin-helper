@@ -8,17 +8,16 @@ from pathlib import Path
 from typing import Union, Any
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
+from passlib.apache import HtpasswdFile
 from wiederverwendbar.functions.download_file import simple_download_file
 
 from admin_helper.logger import logger
 from admin_helper.settings import settings
 from admin_helper.templates import TEMPLATE_DIRECTORY_PATH
 
-TreeObject = dict[str, Union["TreeObject", Union[str, Path]]]
 
-
-def render_file(input_file: Union[str, Path],
-                output_file: Union[str, Path],
+def render_file(input_file: str | Path,
+                output_file: str | Path,
                 overwrite: bool = False,
                 environment_options: dict[str, Any] | None = None,
                 **data) -> None:
@@ -67,45 +66,15 @@ def render_file(input_file: Union[str, Path],
     logger.debug(f"File '{output_file}' rendered successfully.")
 
 
-def render_filetree(output: Path | str,
-                    tree: TreeObject,
-                    overwrite: bool = False,
-                    environment_options: dict[str, Any] | None = None,
-                    **data) -> None:
-    logger.debug(f"Rendering filetree to '{output}' ...")
-
-    output = Path(output)
-
-    # create directory
-    output.mkdir(parents=True, exist_ok=True)
-
-    for key, value in tree.items():
-        if isinstance(value, dict):
-            render_filetree(output=output / key,
-                            tree=value,
-                            overwrite=overwrite,
-                            environment_options=environment_options,
-                            **data)
-        else:
-            render_file(input_file=value,
-                        output_file=output / key,
-                        overwrite=overwrite,
-                        environment_options=environment_options,
-                        **data)
-
-    logger.debug(f"Filetree '{output}' rendered successfully.")
-
-
 def render_supervisord_conf() -> None:
     logger.debug(f"Rendering supervisord config ...")
 
-    render_filetree(output=settings.config_directory,
-                    tree={
-                        settings.supervisord.config_file_name: TEMPLATE_DIRECTORY_PATH / "supervisord" / "supervisord.conf.j2",
-                    },
-                    overwrite=True,
-                    **{"settings": settings,
-                       "environment": os.environ})
+    # render config
+    render_file(input_file=TEMPLATE_DIRECTORY_PATH / "supervisord" / "supervisord.conf.j2",
+                output_file=settings.supervisord.config_file_path,
+                overwrite=True,
+                **{"settings": settings,
+                   "environment": os.environ})
 
     logger.debug(f"Supervisord config rendered successfully.")
 
@@ -180,8 +149,48 @@ def download_traefik() -> None:
 
 
 def render_traefik_conf() -> None:
-    print()
+    logger.debug(f"Rendering traefik config ...")
+
+    # render static config
+    logger.debug(f"Rendering static config to '{settings.traefik.config_file_path}' ...")
+    render_file(input_file=TEMPLATE_DIRECTORY_PATH / "traefik" / "traefik.yaml.j2",
+                output_file=settings.traefik.config_file_path,
+                overwrite=True,
+                **{"settings": settings,
+                   "environment": os.environ})
+
+    # render dynamic config
+    logger.debug(f"Rendering dynamic config to '{settings.traefik.dynamic_file_path}' ...")
+    render_file(input_file=TEMPLATE_DIRECTORY_PATH / "traefik" / "dynamic.yaml.j2",
+                output_file=settings.traefik.dynamic_file_path,
+                overwrite=True,
+                **{"settings": settings,
+                   "environment": os.environ})
+
+    # generate .htpasswd
+    logger.debug(f"Generating .htpasswd at '{settings.traefik.htpasswd_file_path}' ...")
+    ht = HtpasswdFile(str(settings.traefik.htpasswd_file_path), new=True)
+    for username, user in settings.users.items():
+        logger.debug(f"Adding user {username} to .htpasswd")
+        ht.set_password(username, user.password)
+    ht.save()
+
+    logger.debug(f"Traefik config rendered successfully.")
 
 
 def start_traefik() -> None:
-    print()
+    logger.debug(f"Starting traefik ...")
+
+    cmd = [str(settings.traefik.binary_file_path),
+           "--configFile",
+           str(settings.traefik.config_file_path)]
+
+    process = subprocess.Popen(cmd)
+
+    try:
+        process.wait()
+    except KeyboardInterrupt:
+        logger.debug(f"Stopping traefik ...")
+        process.send_signal(signal.SIGINT)
+        process.wait()
+        logger.debug(f"Traefik stopped successfully.")

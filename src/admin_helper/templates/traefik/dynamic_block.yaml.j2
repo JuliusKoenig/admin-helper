@@ -7,7 +7,23 @@ http:
   #     service: api@internal
   #     entryPoints:
   #       - http
+  services:
+    {% for service in settings.traefik.services %}
+        {% include "program.conf.j2" %}
+    {% endfor %}
+    dashboard-http:
+      rule: PathPrefix(`/`)
+      middlewares:
+        - auth-basic
+      service: dashboard-service
+      entryPoints:
+        - http
 
+  services:
+    dashboard-service:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:{{ dashboard_settings.port }}"
   middlewares:
     auth-basic:
       basicAuth:

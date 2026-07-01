@@ -1,0 +1,9 @@
+{# Blank line are here to separate router #}
+
+    {{ router.name }}:
+      rule: {{ router.rule }}
+      middlewares:{% for middleware in router.middlewares %}
+        - {{ middleware }}{% endfor %}
+      service: {{ router.service }}
+      entryPoints:{% for entrypoint in router.entry_points %}
+        - {{ entrypoint }}{% endfor %}

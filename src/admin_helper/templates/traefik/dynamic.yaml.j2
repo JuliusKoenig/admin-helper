@@ -1,15 +1,10 @@
 http:
-  routers:
-    dashboard-http:
-      rule: PathPrefix(`/`)
-      middlewares:
-        - auth-basic
-      service: dashboard-service
-      entryPoints:
-        - http
-
+  routers:{% for router in settings.traefik.routers %}{% include "blocks/router.yaml.j2" %}{% endfor %}
+  middlewares:
+    auth-basic:
+      basicAuth:
+        usersFile: "{{ settings.traefik.htpasswd_file_path }}"
   services:
-    dashboard-service:
-      loadBalancer:
-        servers:
-          - url: "http://127.0.0.1:{{ dashboard_settings.port }}"
+    {% for service in settings.traefik.services %}
+        {% include "blocks/service.yaml.j2" %}
+    {% endfor %}

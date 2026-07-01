@@ -2,6 +2,7 @@ import encodings
 import logging
 import sys
 from enum import Enum
+from ipaddress import IPv4Address
 from pathlib import Path
 from typing import IO, Any
 
@@ -198,9 +199,70 @@ class Settings(BaseSettings):
         binary_name: str = Field(default="traefik",
                                  title="Traefik Binary name",
                                  description="The name of the Traefik binary")
-        config_file_name: str = Field(default="traefik.conf",
-                                      title="Traefik Config File name",
-                                      description="The name of the Traefik config file")
+        config_file_name: str = Field(default="traefik.yaml",
+                                      title="Traefik static config File name",
+                                      description="The name of the Traefik static config file")
+        dynamic_file_name: str = Field(default="dynamic.yaml",
+                                       title="Traefik Dynamic Config File name",
+                                       description="The name of the Traefik dynamic config file")
+        htpasswd_file_name: str = Field(default=".htpasswd",
+                                        title="Traefik htpasswd File name",
+                                        description="The name of the Traefik htpasswd file")
+        host: IPv4Address = Field(default=IPv4Address("127.0.0.1"),
+                                  title="Traefik host",
+                                  description="The host of the Traefik")
+        port: int = Field(default=8000,
+                          ge=1,
+                          le=65535,
+                          title="Traefik port",
+                          description="The port of the Traefik")
+        dashboard: bool = Field(default=True,
+                                title="Traefik dashboard",
+                                description="Whether to enable the Traefik dashboard")
+
+        class Level(str, Enum):
+            ERROR = "ERROR"
+            WARNING = "WARNING"
+            INFO = "INFO"
+            DEBUG = "DEBUG"
+
+        level: Level = Field(default=Level.DEBUG,
+                             title="Logger level",
+                             description="The level of the logger")
+
+        class _Router(BaseModel):
+            name: str = Field(default=...,
+                              title="Router Name",
+                              description="The name of the router")
+            rule: str = Field(default=...,
+                              title="Router Rule",
+                              description="The router rule")
+            middlewares: list[str] = Field(default=...,
+                                           title="Router Middlewares",
+                                           description="The router middlewares")
+            service: str = Field(default=...,
+                                 title="Router Service",
+                                 description="The router service")
+            entry_points: list[str] = Field(default=...,
+                                            title="Router Entrypoints",
+                                            description="The router entrypoints")
+
+        class _Service(BaseModel):
+            name: str = Field(default=...,
+                              title="Service Name",
+                              description="The name of the service")
+            protocol: str = Field(default=...,
+                                  title="Service Protocol",
+                                  description="The protocol of the service")
+            host: str = Field(default=...,
+                              title="Service Host",
+                              description="The host of the service")
+            port: int = Field(default=...,
+                              ge=1,
+                              le=65535,
+                              title="Service Port",
+                              description="The port of the service")
+
 
         @property
         def binary_file_path(self) -> Path:
@@ -208,11 +270,37 @@ class Settings(BaseSettings):
 
         @property
         def config_file_path(self) -> Path:
-            return settings.config_directory / self.config_file_name
+            return settings.config_directory / "traefik" / self.config_file_name
+
+        @property
+        def dynamic_file_path(self) -> Path:
+            return settings.config_directory / "traefik" / self.dynamic_file_name
+
+        @property
+        def htpasswd_file_path(self) -> Path:
+            return settings.config_directory / "traefik" / self.htpasswd_file_name
+
+        @property
+        def routers(self) -> list[Any]:
+            routers = []
+            if settings.traefik.dashboard:
+                routers.append(Settings.Traefik._Router(
+                    name="dashboard",
+                    rule="PathPrefix(`/api`) || PathPrefix(`/dashboard`)",
+                    middlewares=["auth-basic"],
+                    service="api@internal",
+                    entry_points=["http"]
+                ))
+            return routers
+
+        @property
+        def services(self) -> list[Any]:
+            services = []
+            return services
 
     traefik: Traefik = Field(default_factory=Traefik,
                              title="Traefik Settings",
                              description="The Traefik settings")
 
 
-settings = Settings()
+settings = Settings(users={"admin": Settings.User(password="admin", is_admin=True)})

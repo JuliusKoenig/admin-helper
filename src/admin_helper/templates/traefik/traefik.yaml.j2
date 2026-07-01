@@ -1,0 +1,22 @@
+entryPoints:
+  ping:
+    address: "{{ settings.traefik.host }}:8081"
+  http:
+    address: "{{ settings.traefik.host }}:{{ settings.traefik.port }}"
+
+providers:
+  file:
+    filename: "{{ settings.traefik.dynamic_file_path }}"
+    watch: true
+
+api:
+  dashboard: {{ "true" if settings.traefik.dashboard else "false" }}
+
+log:
+  level: "{{ settings.traefik.level.value }}"
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+accessLog: {}

@@ -1,0 +1,6 @@
+{# Blank line are here to separate router #}
+
+    {{ service.name }}:
+      loadBalancer:
+        servers:
+          - url: "{{ service.protocol }}://{{ service.host }}:{{ service.port }}"
