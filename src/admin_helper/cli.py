@@ -46,7 +46,7 @@ def traefik_command() -> None:
         download_binary(name="Traefik",
                         sub_settings=settings.traefik)
 
-    # rendering traefik config
+    # # rendering traefik config
     render_traefik_conf()
 
     # starting traefik

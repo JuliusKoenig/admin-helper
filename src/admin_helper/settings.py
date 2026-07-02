@@ -318,7 +318,7 @@ class Settings(BaseSettings):
                           le=65535,
                           title="Traefik port",
                           description="The port of the Traefik")
-        dashboard: bool = Field(default=False,
+        dashboard: bool = Field(default=True,
                                 title="Traefik dashboard",
                                 description="Whether to enable the Traefik dashboard")
 
@@ -326,9 +326,9 @@ class Settings(BaseSettings):
             name: str = Field(default=...,
                               title="Router Name",
                               description="The name of the router")
-            rule: str = Field(default=...,
-                              title="Router Rule",
-                              description="The router rule")
+            paths: list[str] = Field(default_factory=list,
+                                     title="Router Rule",
+                                     description="The router rule")
             middlewares: list[str] = Field(default=...,
                                            title="Router Middlewares",
                                            description="The router middlewares")
@@ -338,6 +338,26 @@ class Settings(BaseSettings):
             entry_points: list[str] = Field(default=...,
                                             title="Router Entrypoints",
                                             description="The router entrypoints")
+            strip_prefix: str | None = Field(default=None,
+                                             title="Router Strip Prefix",
+                                             description="The router strip prefix")
+
+            @property
+            def rule(self) -> str:
+                rule = ""
+                for path in self.paths:
+                    if rule != "":
+                        rule += " || "
+                    rule += f"PathPrefix(`{path}`)"
+                return rule
+
+        class _Middleware(BaseModel):
+            name: str = Field(default=...,
+                              title="Middleware Name",
+                              description="The name of the middleware")
+            content: str = Field(default=...,
+                                 title="Middleware Content",
+                                 description="The content of the middleware")
 
         class _Service(BaseModel):
             name: str = Field(default=...,
@@ -346,9 +366,9 @@ class Settings(BaseSettings):
             protocol: str = Field(default=...,
                                   title="Service Protocol",
                                   description="The protocol of the service")
-            host: str = Field(default=...,
-                              title="Service Host",
-                              description="The host of the service")
+            host: IPv4Address = Field(default=...,
+                                      title="Service Host",
+                                      description="The host of the service")
             port: int = Field(default=...,
                               ge=1,
                               le=65535,
@@ -417,12 +437,28 @@ class Settings(BaseSettings):
             return LOG_DIRECTORY / "traefik" / self.access_log_file_name
 
         @property
-        def routers(self) -> list[Any]:
+        def routers(self) -> list[_Router]:
             routers = []
+            if settings.supervisord.dashboard:
+                routers.append(Settings.Traefik._Router(
+                    name="supervisord-dashboard",
+                    paths=["/supervisord/"],
+                    middlewares=["auth-basic", "supervisor-strip-prefix"],
+                    service="supervisord-dashboard",
+                    entry_points=["http"],
+                    strip_prefix="/supervisord"
+                ))
+                routers.append(Settings.Traefik._Router(
+                    name="supervisord-api",
+                    paths=["/supervisor/", "/program/"],
+                    middlewares=["auth-basic"],
+                    service="supervisord-dashboard",
+                    entry_points=["http"]
+                ))
             if settings.traefik.dashboard:
                 routers.append(Settings.Traefik._Router(
-                    name="dashboard",
-                    rule="PathPrefix(`/api`) || PathPrefix(`/dashboard`)",
+                    name="traefik-dashboard",
+                    paths=["/api/", "/dashboard/"],
                     middlewares=["auth-basic"],
                     service="api@internal",
                     entry_points=["http"]
@@ -430,8 +466,25 @@ class Settings(BaseSettings):
             return routers
 
         @property
-        def services(self) -> list[Any]:
+        def middlewares(self) -> list[_Middleware]:
+            middlewares = []
+            if settings.supervisord.dashboard:
+                middlewares.append(Settings.Traefik._Middleware(name="supervisor-strip-prefix",
+                                                                content="""stripPrefix:
+        prefixes:
+        - \"/supervisord\""""))
+            return middlewares
+
+        @property
+        def services(self) -> list[_Service]:
             services = []
+            if settings.supervisord.dashboard:
+                services.append(Settings.Traefik._Service(
+                    name="supervisord-dashboard",
+                    protocol="http",
+                    host=settings.supervisord.host,
+                    port=settings.supervisord.port
+                ))
             return services
 
     traefik: Traefik = Field(default_factory=Traefik,
