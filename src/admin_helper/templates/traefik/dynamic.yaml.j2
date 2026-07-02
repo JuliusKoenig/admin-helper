@@ -1,10 +1,10 @@
 http:
-  routers:{% for router in settings.traefik.routers %}{% include "blocks/router.yaml.j2" %}{% endfor %}
+  routers:
+{% for router in settings.traefik.routers %}{% include "blocks/router.yaml.j2" %}{% endfor %}
   middlewares:
     auth-basic:
       basicAuth:
-        usersFile: "{{ settings.traefik.htpasswd_file_path | unix_path }}"
+        usersFile: "{{ settings.traefik.htpasswd_file_path | unix_path  }}"
+{% for middleware in settings.traefik.middlewares %}{% include "blocks/middleware.yaml.j2" %}{% endfor %}
   services:
-    {% for service in settings.traefik.services %}
-        {% include "blocks/service.yaml.j2" %}
-    {% endfor %}
+{% for service in settings.traefik.services %}{% include "blocks/service.yaml.j2" %}{% endfor %}
