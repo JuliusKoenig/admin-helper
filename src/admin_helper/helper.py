@@ -8,7 +8,7 @@ import subprocess
 import tarfile
 import zipfile
 from logging import Logger
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
@@ -140,8 +140,27 @@ def start_supervisor() -> None:
            str(settings.supervisord.config_file_path)]
 
     # starting supervisord
-    process = subprocess.Popen(cmd)
+    process = subprocess.Popen(cmd,
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL)
 
+    # create logger
+    supervisord_main_logger = Logger(name=f"{logger.name}.supervisord.main")
+    supervisord_main_logger.parent = logger
+
+    # start file streamer
+    log_file_streamer = LogFileStreamer(logger=supervisord_main_logger,
+                                        log_file_path=settings.supervisord.log_file_path,
+                                        pattern=re.compile(
+                                            r'^time="(?P<timestamp>[^"]+)"\s+'
+                                            r'level=(?P<level>\w+)\s+'
+                                            r'msg="(?P<message>[^"]*)"'
+                                            r'(?P<fields>.*)$'
+                                        ),
+                                        fallback_function_name="supervisord-main")
+    log_file_streamer.start()
+
+    # wait for process
     try:
         process.wait()
     except KeyboardInterrupt:
@@ -204,7 +223,9 @@ def start_traefik() -> None:
            str(settings.traefik.config_file_path)]
 
     # starting traefik
-    process = subprocess.Popen(cmd)
+    process = subprocess.Popen(cmd,
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL)
 
     # create logger
     traefik_main_logger = Logger(name=f"{logger.name}.traefik.main")
@@ -218,10 +239,8 @@ def start_traefik() -> None:
                                         pattern=re.compile(
                                             r"^(?P<timestamp>\S+)\s+"
                                             r"(?P<level>[A-Z]+)\s+"
+                                            r"(?P<function_name>github\.com/\S+:\d+)\s+>\s*"
                                             r"(?P<message>.*)$"
-                                        ),
-                                        filter_pattern=re.compile(
-                                            r"^github\.com/\S+:\d+\s+>\s*"
                                         ))
     access_log_file_streamer = LogFileStreamer(logger=traefik_access_logger,
                                                log_file_path=settings.traefik.access_log_file_path,
@@ -244,10 +263,12 @@ def start_traefik() -> None:
                                                ),
                                                fixed_level=logging.INFO,
                                                message_format="{method} {path} HTTP {status} service={service} duration={duration}",
-                                               timestamp_format="%d/%b/%Y:%H:%M:%S %z")
+                                               timestamp_format="%d/%b/%Y:%H:%M:%S %z",
+                                               fallback_function_name="traefik-access-log")
     log_file_streamer.start()
     access_log_file_streamer.start()
 
+    # wait for process
     try:
         process.wait()
     except KeyboardInterrupt:

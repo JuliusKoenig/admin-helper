@@ -14,11 +14,11 @@ class LogFileStreamer(threading.Thread):
                  log_file_path: Path,
                  timeout: int = 10,
                  pattern: re.Pattern[str] = re.compile(""),
-                 filter_pattern: re.Pattern[str] = re.compile(""),
                  level_mapping: dict[str, int] | None = None,
                  fixed_level: int | None = None,
                  timestamp_format: str = "%Y-%m-%dT%H:%M:%S%z",
-                 message_format: str = "{message}") -> None:
+                 message_format: str = "{message}",
+                 fallback_function_name: str = "") -> None:
         super().__init__(name=f"{self.__class__.__name__}-{log_file_path.name}",
                          daemon=True)
         self._running = False
@@ -34,7 +34,6 @@ class LogFileStreamer(threading.Thread):
         self.logger = logger
         self.log_file_path = log_file_path
         self.pattern = pattern
-        self.filter_pattern = filter_pattern
         if level_mapping is None:
             level_mapping = {
                 "DBG": logging.DEBUG,
@@ -53,6 +52,7 @@ class LogFileStreamer(threading.Thread):
         self.fixed_level = fixed_level
         self.timestamp_format = timestamp_format
         self.message_format = message_format
+        self.fallback_function_name = fallback_function_name
 
     @property
     def running(self) -> bool:
@@ -76,13 +76,20 @@ class LogFileStreamer(threading.Thread):
         values = defaultdict(str, match.groupdict())
         message = self.message_format.format_map(values)
 
-        # filter message
-        message = self.filter_pattern.sub("", message)
+        # parse timestamp
         timestamp = datetime.strptime(timestamp_raw, self.timestamp_format)
+
+        # get function name
+        try:
+            fn = match.group("function_name")
+        except IndexError:
+            fn = self.fallback_function_name
+
+        # make record
         record = self.logger.makeRecord(
             name=self.logger.name,
             level=log_level,
-            fn="traefik",
+            fn=fn,
             lno=0,
             msg=message,
             args=(),
