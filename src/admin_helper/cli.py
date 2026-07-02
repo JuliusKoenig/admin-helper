@@ -16,10 +16,16 @@ def settings_command() -> None:
 
 @cli_app.command(name="daemon", help=f"Start the {__title__} Daemon")
 def supervisor_command() -> None:
-    from admin_helper.helper import render_supervisord_conf, start_supervisor
+    from admin_helper.helper import download_binary, render_supervisord_conf, start_supervisor
 
     console.rule(f"{__title__} Daemon", style="bold blue")
     logger.debug(f"Starting {__title__} Daemon ...")
+
+    # check if supervisor binary exist
+    if not settings.supervisord.binary_file_path.is_file():
+        # download supervisord binary
+        download_binary(name="SupervisorD",
+                        sub_settings=settings.supervisord)
 
     # rendering supervisord config
     render_supervisord_conf()
@@ -29,7 +35,7 @@ def supervisor_command() -> None:
 
 @cli_app.command(name="traefik", help=f"Start the {__title__} Traefik")
 def traefik_command() -> None:
-    from admin_helper.helper import download_traefik, render_traefik_conf, start_traefik
+    from admin_helper.helper import download_binary, render_traefik_conf, start_traefik
 
     console.rule(f"{__title__} Traefik", style="bold blue")
     logger.debug(f"Starting {__title__} Traefik ...")
@@ -37,7 +43,8 @@ def traefik_command() -> None:
     # check if traefik binary exist
     if not settings.traefik.binary_file_path.is_file():
         # download traefik binary
-        download_traefik()
+        download_binary(name="Traefik",
+                        sub_settings=settings.traefik)
 
     # rendering traefik config
     render_traefik_conf()

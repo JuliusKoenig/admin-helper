@@ -1,18 +1,23 @@
+import logging
 import os
 import platform
+import re
 import shutil
 import signal
 import subprocess
 import tarfile
-from pathlib import Path
-from typing import Union, Any
+import zipfile
+from logging import Logger
+from pathlib import Path, PurePosixPath
+from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from passlib.apache import HtpasswdFile
 from wiederverwendbar.functions.download_file import simple_download_file
 
+from admin_helper.log_file_streamer import LogFileStreamer
 from admin_helper.logger import logger
-from admin_helper.settings import settings
+from admin_helper.settings import settings, Settings
 from admin_helper.templates import TEMPLATE_DIRECTORY_PATH
 
 
@@ -50,6 +55,9 @@ def render_file(input_file: str | Path,
     logger.debug(f"Environment options: {environment_options}")
     environment = Environment(**environment_options)
 
+    # set filter
+    environment.filters["unix_path"] = lambda path: str(path).replace("\\", "/") if platform.system() == "Windows" else str(path)
+
     # get template
     template = environment.get_template(input_file.name)
 
@@ -64,6 +72,40 @@ def render_file(input_file: str | Path,
         output_file.write(output)
 
     logger.debug(f"File '{output_file}' rendered successfully.")
+
+
+def download_binary(name: str,
+                    sub_settings: Settings.SupervisorD | Settings.Traefik) -> None:
+    logger.debug(f"Downloading {name} binary from '{sub_settings.download_url}' ...")
+
+    # download binary
+    settings.temp_directory.mkdir(parents=True, exist_ok=True)
+    if not simple_download_file(download_url=sub_settings.download_url,
+                                local_file=sub_settings.temp_archive_file_path,
+                                overwrite=True):
+        raise RuntimeError(f"Failed to download {name} binary from '{sub_settings.download_url}'")
+
+    # extract binary
+    logger.debug(f"Extracting {name} binary from '{sub_settings.temp_archive_file_path}' ...")
+    if ".tar" in sub_settings.temp_archive_file_path.suffixes and ".gz" in sub_settings.temp_archive_file_path.suffixes:
+        with tarfile.open(sub_settings.temp_archive_file_path, "r:gz") as archive:
+            archive.extractall(path=settings.temp_directory)
+    elif ".zip" in sub_settings.temp_archive_file_path.suffixes:
+        with zipfile.ZipFile(sub_settings.temp_archive_file_path, "r") as archive:
+            archive.extractall(settings.temp_directory)
+    else:
+        raise RuntimeError(f"Unsupported archive type: {', '.join([s for s in sub_settings.temp_archive_file_path.suffixes])}")
+    if not sub_settings.temp_binary_file_path.is_file():
+        raise RuntimeError(f"Binary not found at '{sub_settings.temp_binary_file_path}' after extraction")
+    logger.debug(f"{name} binary extracted successfully.")
+
+    # move binary to binary directory
+    logger.debug(f"Moving {name} binary to '{sub_settings.binary_file_path}' ...")
+    settings.binary_directory.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(sub_settings.temp_binary_file_path), str(sub_settings.binary_file_path))
+    sub_settings.binary_file_path.chmod(0o755)
+
+    logger.debug(f"{name} binary downloaded and moved successfully to '{sub_settings.binary_file_path}'.")
 
 
 def render_supervisord_conf() -> None:
@@ -82,12 +124,23 @@ def render_supervisord_conf() -> None:
 def start_supervisor() -> None:
     logger.debug(f"Starting supervisor ...")
 
-    cmd = ["supervisord",
-           "-c",
-           str(settings.supervisord.config_file_path),
-           "-n"]
+    # ensure pid file parent directory exists
+    settings.supervisord.pid_file_path.parent.mkdir(parents=True, exist_ok=True)
 
-    process = subprocess.Popen(cmd, )
+    # ensure log file parent directory exist
+    settings.supervisord.log_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # cleanup log file
+    if settings.supervisord.log_file_path.is_file():
+        settings.supervisord.log_file_path.unlink()
+
+    # cmd
+    cmd = [str(settings.supervisord.binary_file_path),
+           "-c",
+           str(settings.supervisord.config_file_path)]
+
+    # starting supervisord
+    process = subprocess.Popen(cmd)
 
     try:
         process.wait()
@@ -97,55 +150,9 @@ def start_supervisor() -> None:
         process.wait()
         logger.debug(f"Supervisor stopped successfully.")
 
-
-def download_traefik() -> None:
-    # get os
-    if platform.system() not in ["Linux", "Darwin", "Windows"]:
-        raise RuntimeError(f"Unsupported operating system: {platform.system()}")
-    os_name = platform.system().lower()
-
-    # get arch
-    if platform.machine() == "x86_64" or platform.machine() == "amd64":
-        arch = "amd64"
-    elif platform.machine() == "arm64" or platform.machine() == "aarch64":
-        arch = "arm64"
-    else:
-        raise RuntimeError(f"Unsupported architecture: {platform.machine()}")
-
-    # format download url
-    download_url = settings.traefik.download_url.format(
-        version=settings.traefik.version,
-        os=os_name,
-        arch=arch,
-    )
-
-    logger.debug(f"Downloading Traefik binary from '{download_url}' ...\n"
-                 f"Version: {settings.traefik.version}\n"
-                 f"OS: {os_name}\n"
-                 f"Architecture: {arch}\n")
-
-    # download binary
-    settings.temp_directory.mkdir(parents=True, exist_ok=True)
-    if not simple_download_file(download_url=download_url,
-                                local_file=settings.temp_directory / "traefik.tar.gz",
-                                overwrite=True):
-        raise RuntimeError(f"Failed to download Traefik binary from '{download_url}'")
-
-    # extract binary
-    logger.debug(f"Extracting Traefik binary to '{settings.temp_directory}' ...")
-    with tarfile.open(settings.temp_directory / "traefik.tar.gz") as tar:
-        tar.extractall(path=settings.temp_directory)
-    if not settings.temp_directory / "traefik":
-        raise RuntimeError(f"Binary not found at '{settings.temp_directory}/traefik'")
-    logger.debug(f"Traefik binary extracted successfully.")
-
-    # move binary to binary directory
-    logger.debug(f"Moving Traefik binary to '{settings.traefik.binary_file_path}' ...")
-    settings.binary_directory.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(settings.temp_directory / "traefik"), str(settings.traefik.binary_file_path))
-    settings.traefik.binary_file_path.chmod(0o755)
-
-    logger.debug(f"Traefik binary downloaded and moved successfully to '{settings.traefik.binary_file_path}'.")
+    # clean up pid file if exist
+    if settings.supervisord.pid_file_path.is_file():
+        settings.supervisord.pid_file_path.unlink()
 
 
 def render_traefik_conf() -> None:
@@ -181,11 +188,65 @@ def render_traefik_conf() -> None:
 def start_traefik() -> None:
     logger.debug(f"Starting traefik ...")
 
+    # ensure log file parent directory exist
+    settings.traefik.log_file_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.traefik.access_log_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # cleanup log file
+    if settings.traefik.log_file_path.is_file():
+        settings.traefik.log_file_path.unlink()
+    if settings.traefik.access_log_file_path.is_file():
+        settings.traefik.access_log_file_path.unlink()
+
+    # cmd
     cmd = [str(settings.traefik.binary_file_path),
            "--configFile",
            str(settings.traefik.config_file_path)]
 
+    # starting traefik
     process = subprocess.Popen(cmd)
+
+    # create logger
+    traefik_main_logger = Logger(name=f"{logger.name}.traefik.main")
+    traefik_main_logger.parent = logger
+    traefik_access_logger = Logger(name=f"{logger.name}.traefik.access")
+    traefik_access_logger.parent = logger
+
+    # start file streamer
+    log_file_streamer = LogFileStreamer(logger=traefik_main_logger,
+                                        log_file_path=settings.traefik.log_file_path,
+                                        pattern=re.compile(
+                                            r"^(?P<timestamp>\S+)\s+"
+                                            r"(?P<level>[A-Z]+)\s+"
+                                            r"(?P<message>.*)$"
+                                        ),
+                                        filter_pattern=re.compile(
+                                            r"^github\.com/\S+:\d+\s+>\s*"
+                                        ))
+    access_log_file_streamer = LogFileStreamer(logger=traefik_access_logger,
+                                               log_file_path=settings.traefik.access_log_file_path,
+                                               pattern=re.compile(
+                                                   r'^(?P<client_ip>\S+) '
+                                                   r'(?P<ident>\S+) '
+                                                   r'(?P<user>\S+) '
+                                                   r'\[(?P<timestamp>[^\]]+)\] '
+                                                   r'"(?P<method>\S+) '
+                                                   r'(?P<path>\S+) '
+                                                   r'(?P<protocol>[^"]+)" '
+                                                   r'(?P<status>\d{3}) '
+                                                   r'(?P<size>\d+) '
+                                                   r'"(?P<referer>[^"]*)" '
+                                                   r'"(?P<user_agent>[^"]*)" '
+                                                   r'(?P<request_count>\d+) '
+                                                   r'"(?P<router>[^"]*)" '
+                                                   r'"(?P<service>[^"]*)" '
+                                                   r'(?P<duration>\S+)$'
+                                               ),
+                                               fixed_level=logging.INFO,
+                                               message_format="{method} {path} HTTP {status} service={service} duration={duration}",
+                                               timestamp_format="%d/%b/%Y:%H:%M:%S %z")
+    log_file_streamer.start()
+    access_log_file_streamer.start()
 
     try:
         process.wait()
@@ -194,3 +255,4 @@ def start_traefik() -> None:
         process.send_signal(signal.SIGINT)
         process.wait()
         logger.debug(f"Traefik stopped successfully.")
+        log_file_streamer.shutdown()

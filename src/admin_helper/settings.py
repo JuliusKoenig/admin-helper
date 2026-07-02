@@ -1,5 +1,6 @@
 import encodings
 import logging
+import platform
 import sys
 from enum import Enum
 from ipaddress import IPv4Address
@@ -21,9 +22,9 @@ class Settings(BaseSettings):
     config_directory: Path = Field(default=Path("etc"),
                                    title="Config Directory",
                                    description="The config directory")
-    pid_directory: Path = Field(default=Path("var/run"),
-                                title="PID Directory",
-                                description="The PID directory")
+    run_directory: Path = Field(default=Path("var/run"),
+                                title="Run Directory",
+                                description="The run directory")
     temp_directory: Path = Field(default=Path("tmp"),
                                  title="Temp Directory",
                                  description="The temp directory")
@@ -149,40 +150,116 @@ class Settings(BaseSettings):
                                    description="List of users")
 
     class SupervisorD(BaseModel):
-        class Programs(BaseModel):
-            ...
+        download_base_url: str = Field(default="https://github.com/ochinchina/supervisord/releases/download",
+                                       title="Base download URL to SupervisorD",
+                                       description="The base download URL to the SupervisorD binary")
 
+        version: str = Field(...,
+                             title="SupervisorD Version",
+                             description="The SupervisorD version")
+        binary_name: str = Field(default_factory=lambda: "supervisord" if platform.system() == "Linux" else "supervisord.exe",
+                                 title="SupervisorD Binary name",
+                                 description="The name of the SupervisorD binary")
+        temp_binary_file_name: str = Field(default_factory=lambda: "supervisord" if platform.system().lower() == "linux" else "supervisord.exe",
+                                           title="SupervisorD Temp binary name",
+                                           description="The name of the SupervisorD temp binary file")
+        temp_archive_file_name: str = Field(default_factory=lambda: "supervisord.tar.gz" if platform.system().lower() == "linux" else "supervisord.zip",
+                                            title="SupervisorD Temp archive name",
+                                            description="The name of the SupervisorD temp archive file")
         config_file_name: str = Field(default="supervisord.conf",
                                       title="SupervisorD Config File name",
                                       description="The name of the supervisord config file.")
         pid_file_name: str = Field(default="supervisord.pid",
                                    title="SupervisorD PID File name",
                                    description="The name of the supervisord pidfile.")
-        log_file_name: str = Field(default="supervisord.log",
+        log_file_name: str = Field(default="main.log",
                                    title="SupervisorD Log File name",
                                    description="The name of the supervisord log file.")
-        sock_file_name: str = Field(default="supervisor.sock",
-                                    title="SupervisorD Socket File name",
-                                    description="The name of the supervisord socket file.")
+
+        class LogLevel(str, Enum):
+            ERROR = "ERROR"
+            WARNING = "WARNING"
+            INFO = "INFO"
+            DEBUG = "DEBUG"
+
+            def __str__(self):
+                return str(self.value).lower()
+
+        log_level: LogLevel = Field(default=LogLevel.DEBUG,
+                                    title="Logger level",
+                                    description="The level of the logger")
+        host: IPv4Address = Field(default=IPv4Address("127.0.0.1"),
+                                  title="SupervisorD host",
+                                  description="The host of the SupervisorD")
+        port: int = Field(default=8000,
+                          ge=1,
+                          le=65535,
+                          title="SupervisorD port",
+                          description="The port of the SupervisorD")
+        dashboard: bool = Field(default=True,
+                                title="SupervisorD dashboard",
+                                description="Whether to enable the SupervisorD dashboard")
+
+        class _Programs(BaseModel):
+            ...
+
+        @property
+        def os(self):
+            os_name = platform.system()
+            if os_name not in ["Linux", "Darwin", "Windows"]:
+                raise RuntimeError(f"Unsupported operating system: {os_name}")
+            if os_name == "Darwin":
+                os_name = "macOS"
+            return os_name
+
+        @property
+        def arch(self) -> str:
+            arch = platform.machine().lower()
+            if arch == "x86_64" or arch == "amd64":
+                arch = "64-bit"
+            elif arch == "arm64" or arch == "aarch64":
+                arch = "ARM64"
+            else:
+                raise RuntimeError(f"Unsupported architecture: {arch}")
+            return arch
+
+        @property
+        def archive_type(self) -> str:
+            archive_type = "tar.gz"
+            if self.os == "Windows":
+                archive_type = "zip"
+            return archive_type
+
+        @property
+        def download_url(self) -> str:
+            return f"{self.download_base_url}/v{self.version}/supervisord_{self.version}_{self.os}_{self.arch}.{self.archive_type}"
+
+        @property
+        def binary_file_path(self) -> Path:
+            return settings.binary_directory / self.binary_name
+
+        @property
+        def temp_binary_file_path(self):
+            return settings.temp_directory / f"supervisord_{self.version}_{self.os}_{self.arch}" / self.temp_binary_file_name
+
+        @property
+        def temp_archive_file_path(self):
+            return settings.temp_directory / self.temp_archive_file_name
 
         @property
         def config_file_path(self) -> Path:
-            return settings.config_directory / self.config_file_name
+            return settings.config_directory / "supervisord" / self.config_file_name
 
         @property
         def pid_file_path(self) -> Path:
-            return settings.config_directory / self.pid_file_name
+            return settings.run_directory / "supervisord" / self.pid_file_name
 
         @property
         def log_file_path(self) -> Path:
-            return LOG_DIRECTORY / self.log_file_name
+            return LOG_DIRECTORY / "supervisord" / self.log_file_name
 
         @property
-        def sock_file_path(self) -> Path:
-            return settings.config_directory / self.sock_file_name
-
-        @property
-        def programs(self) -> list[Programs]:
+        def programs(self) -> list[_Programs]:
             return []
 
     supervisord: SupervisorD = Field(default_factory=SupervisorD,
@@ -190,15 +267,21 @@ class Settings(BaseSettings):
                                      description="The supervisord settings")
 
     class Traefik(BaseModel):
-        download_url: str = Field(default="https://github.com/traefik/traefik/releases/download/v{version}/traefik_v{version}_{os}_{arch}.tar.gz",
-                                  title="Download URL to Traefik",
-                                  description="The download URL to the Traefik binary")
+        download_base_url: str = Field(default="https://github.com/traefik/traefik/releases/download",
+                                       title="Base download URL to Traefik",
+                                       description="The base download URL to the Traefik binary.")
         version: str = Field(...,
                              title="Traefik Version",
                              description="The Traefik version")
-        binary_name: str = Field(default="traefik",
+        binary_name: str = Field(default_factory=lambda: "traefik" if platform.system() == "Linux" else "traefik.exe",
                                  title="Traefik Binary name",
                                  description="The name of the Traefik binary")
+        temp_binary_file_name: str = Field(default_factory=lambda: "traefik" if platform.system().lower() == "linux" else "traefik.exe",
+                                           title="Traefik Temp binary name",
+                                           description="The name of the Traefik temp binary file")
+        temp_archive_file_name: str = Field(default_factory=lambda: "traefik.tar.gz" if platform.system().lower() == "linux" else "traefik.zip",
+                                            title="Traefik Temp archive name",
+                                            description="The name of the Traefik temp archive file")
         config_file_name: str = Field(default="traefik.yaml",
                                       title="Traefik static config File name",
                                       description="The name of the Traefik static config file")
@@ -208,27 +291,36 @@ class Settings(BaseSettings):
         htpasswd_file_name: str = Field(default=".htpasswd",
                                         title="Traefik htpasswd File name",
                                         description="The name of the Traefik htpasswd file")
-        host: IPv4Address = Field(default=IPv4Address("127.0.0.1"),
-                                  title="Traefik host",
-                                  description="The host of the Traefik")
-        port: int = Field(default=8000,
-                          ge=1,
-                          le=65535,
-                          title="Traefik port",
-                          description="The port of the Traefik")
-        dashboard: bool = Field(default=True,
-                                title="Traefik dashboard",
-                                description="Whether to enable the Traefik dashboard")
+        log_file_name: str = Field(default="main.log",
+                                   title="Traefik Log File name",
+                                   description="The name of the Traefik log file.")
+        access_log_file_name: str = Field(default="access.log",
+                                          title="Traefik Access Log File name",
+                                          description="The name of the Traefik access log file")
 
-        class Level(str, Enum):
+        class LogLevel(str, Enum):
             ERROR = "ERROR"
             WARNING = "WARNING"
             INFO = "INFO"
             DEBUG = "DEBUG"
 
-        level: Level = Field(default=Level.DEBUG,
-                             title="Logger level",
-                             description="The level of the logger")
+            def __str__(self):
+                return str(self.value).lower()
+
+        log_level: LogLevel = Field(default=LogLevel.DEBUG,
+                                    title="Logger level",
+                                    description="The level of the logger")
+        host: IPv4Address = Field(default=IPv4Address("127.0.0.1"),
+                                  title="Traefik host",
+                                  description="The host of the Traefik")
+        port: int = Field(default=8080,
+                          ge=1,
+                          le=65535,
+                          title="Traefik port",
+                          description="The port of the Traefik")
+        dashboard: bool = Field(default=False,
+                                title="Traefik dashboard",
+                                description="Whether to enable the Traefik dashboard")
 
         class _Router(BaseModel):
             name: str = Field(default=...,
@@ -263,10 +355,46 @@ class Settings(BaseSettings):
                               title="Service Port",
                               description="The port of the service")
 
+        @property
+        def os(self):
+            os_name = platform.system()
+            if os_name not in ["Linux", "Darwin", "Windows"]:
+                raise RuntimeError(f"Unsupported operating system: {os_name}")
+            return os_name.lower()
+
+        @property
+        def arch(self) -> str:
+            arch = platform.machine().lower()
+            if arch == "x86_64" or arch == "amd64":
+                arch = "amd64"
+            elif arch == "arm64" or arch == "aarch64":
+                arch = "arm64"
+            else:
+                raise RuntimeError(f"Unsupported architecture: {arch}")
+            return arch
+
+        @property
+        def archive_type(self) -> str:
+            archive_type = "tar.gz"
+            if self.os == "windows":
+                archive_type = "zip"
+            return archive_type
+
+        @property
+        def download_url(self) -> str:
+            return f"{self.download_base_url}/v{self.version}/traefik_v{self.version}_{self.os}_{self.arch}.{self.archive_type}"
 
         @property
         def binary_file_path(self) -> Path:
             return settings.binary_directory / self.binary_name
+
+        @property
+        def temp_binary_file_path(self):
+            return settings.temp_directory / self.temp_binary_file_name
+
+        @property
+        def temp_archive_file_path(self):
+            return settings.temp_directory / self.temp_archive_file_name
 
         @property
         def config_file_path(self) -> Path:
@@ -279,6 +407,14 @@ class Settings(BaseSettings):
         @property
         def htpasswd_file_path(self) -> Path:
             return settings.config_directory / "traefik" / self.htpasswd_file_name
+
+        @property
+        def log_file_path(self) -> Path:
+            return LOG_DIRECTORY / "traefik" / self.log_file_name
+
+        @property
+        def access_log_file_path(self) -> Path:
+            return LOG_DIRECTORY / "traefik" / self.access_log_file_name
 
         @property
         def routers(self) -> list[Any]:
