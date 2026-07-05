@@ -150,22 +150,6 @@ class Settings(BaseSettings):
                                    description="List of users")
 
     class SupervisorD(BaseModel):
-        download_base_url: str = Field(default="https://github.com/ochinchina/supervisord/releases/download",
-                                       title="Base download URL to SupervisorD",
-                                       description="The base download URL to the SupervisorD binary")
-
-        version: str = Field(...,
-                             title="SupervisorD Version",
-                             description="The SupervisorD version")
-        binary_name: str = Field(default_factory=lambda: "supervisord" if platform.system() == "Linux" else "supervisord.exe",
-                                 title="SupervisorD Binary name",
-                                 description="The name of the SupervisorD binary")
-        temp_binary_file_name: str = Field(default_factory=lambda: "supervisord" if platform.system().lower() == "linux" else "supervisord.exe",
-                                           title="SupervisorD Temp binary name",
-                                           description="The name of the SupervisorD temp binary file")
-        temp_archive_file_name: str = Field(default_factory=lambda: "supervisord.tar.gz" if platform.system().lower() == "linux" else "supervisord.zip",
-                                            title="SupervisorD Temp archive name",
-                                            description="The name of the SupervisorD temp archive file")
         config_file_name: str = Field(default="supervisord.conf",
                                       title="SupervisorD Config File name",
                                       description="The name of the supervisord config file.")
@@ -204,51 +188,8 @@ class Settings(BaseSettings):
             ...
 
         @property
-        def os(self):
-            os_name = platform.system()
-            if os_name not in ["Linux", "Darwin", "Windows"]:
-                raise RuntimeError(f"Unsupported operating system: {os_name}")
-            if os_name == "Darwin":
-                os_name = "macOS"
-            return os_name
-
-        @property
-        def arch(self) -> str:
-            arch = platform.machine().lower()
-            if arch == "x86_64" or arch == "amd64":
-                arch = "64-bit"
-            elif arch == "arm64" or arch == "aarch64":
-                arch = "ARM64"
-            else:
-                raise RuntimeError(f"Unsupported architecture: {arch}")
-            return arch
-
-        @property
-        def archive_type(self) -> str:
-            archive_type = "tar.gz"
-            if self.os == "Windows":
-                archive_type = "zip"
-            return archive_type
-
-        @property
-        def download_url(self) -> str:
-            return f"{self.download_base_url}/v{self.version}/supervisord_{self.version}_{self.os}_{self.arch}.{self.archive_type}"
-
-        @property
-        def binary_file_path(self) -> Path:
-            return settings.binary_directory / self.binary_name
-
-        @property
-        def temp_binary_file_path(self):
-            return settings.temp_directory / f"supervisord_{self.version}_{self.os}_{self.arch}" / self.temp_binary_file_name
-
-        @property
-        def temp_archive_file_path(self):
-            return settings.temp_directory / self.temp_archive_file_name
-
-        @property
         def config_file_path(self) -> Path:
-            return settings.config_directory / "supervisord" / self.config_file_name
+            return settings.config_directory / self.config_file_name
 
         @property
         def pid_file_path(self) -> Path:
@@ -273,13 +214,13 @@ class Settings(BaseSettings):
         version: str = Field(...,
                              title="Traefik Version",
                              description="The Traefik version")
-        binary_name: str = Field(default_factory=lambda: "traefik" if platform.system() == "Linux" else "traefik.exe",
+        binary_name: str = Field(default_factory=lambda: "traefik.exe" if platform.system() == "Windows" else "traefik",
                                  title="Traefik Binary name",
                                  description="The name of the Traefik binary")
-        temp_binary_file_name: str = Field(default_factory=lambda: "traefik" if platform.system().lower() == "linux" else "traefik.exe",
+        temp_binary_file_name: str = Field(default_factory=lambda: "traefik.exe" if platform.system().lower() == "windows" else "traefik",
                                            title="Traefik Temp binary name",
                                            description="The name of the Traefik temp binary file")
-        temp_archive_file_name: str = Field(default_factory=lambda: "traefik.tar.gz" if platform.system().lower() == "linux" else "traefik.zip",
+        temp_archive_file_name: str = Field(default_factory=lambda: "traefik.zip" if platform.system().lower() == "windows" else "traefik.tar.gz",
                                             title="Traefik Temp archive name",
                                             description="The name of the Traefik temp archive file")
         config_file_name: str = Field(default="traefik.yaml",

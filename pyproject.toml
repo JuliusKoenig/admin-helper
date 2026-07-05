@@ -12,6 +12,7 @@ dependencies = [
     "pydantic-settings>=2.13.1",
     "requests>=2.34.2",
     "rich>=14.3.3",
+    "supervisor>=4.3.0",
     "typer>=0.24.1",
     "urllib3>=2.7.0",
     "wiederverwendbar>=0.12.0",

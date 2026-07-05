@@ -21,12 +21,6 @@ def supervisor_command() -> None:
     console.rule(f"{__title__} Daemon", style="bold blue")
     logger.debug(f"Starting {__title__} Daemon ...")
 
-    # check if supervisor binary exist
-    if not settings.supervisord.binary_file_path.is_file():
-        # download supervisord binary
-        download_binary(name="SupervisorD",
-                        sub_settings=settings.supervisord)
-
     # rendering supervisord config
     render_supervisord_conf()
 

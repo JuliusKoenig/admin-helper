@@ -88,6 +88,7 @@ def download_binary(name: str,
     # extract binary
     logger.debug(f"Extracting {name} binary from '{sub_settings.temp_archive_file_path}' ...")
     if ".tar" in sub_settings.temp_archive_file_path.suffixes and ".gz" in sub_settings.temp_archive_file_path.suffixes:
+        # noinspection PyTypeChecker
         with tarfile.open(sub_settings.temp_archive_file_path, "r:gz") as archive:
             archive.extractall(path=settings.temp_directory)
     elif ".zip" in sub_settings.temp_archive_file_path.suffixes:
@@ -135,9 +136,10 @@ def start_supervisor() -> None:
         settings.supervisord.log_file_path.unlink()
 
     # cmd
-    cmd = [str(settings.supervisord.binary_file_path),
+    cmd = ["supervisord",
            "-c",
-           str(settings.supervisord.config_file_path)]
+           str(settings.supervisord.config_file_path),
+           "-n"]
 
     # starting supervisord
     process = subprocess.Popen(cmd,
@@ -152,12 +154,14 @@ def start_supervisor() -> None:
     log_file_streamer = LogFileStreamer(logger=supervisord_main_logger,
                                         log_file_path=settings.supervisord.log_file_path,
                                         pattern=re.compile(
-                                            r'^time="(?P<timestamp>[^"]+)"\s+'
-                                            r'level=(?P<level>\w+)\s+'
-                                            r'msg="(?P<message>[^"]*)"'
-                                            r'(?P<fields>.*)$'
+                                            r"^(?P<timestamp>\d{4}-\d{2}-\d{2} "
+                                            r"\d{2}:\d{2}:\d{2},\d{3}) "
+                                            r"(?P<level>[A-Z]+) "
+                                            r"(?P<message>.*)$"
                                         ),
-                                        fallback_function_name="supervisord-main")
+                                        timestamp_format="%Y-%m-%d %H:%M:%S,%f",
+                                        fallback_function_name="supervisord-main",
+                                        filter_messages=["Server 'inet_http_server' running without any HTTP authentication checking"])
     log_file_streamer.start()
 
     # wait for process

@@ -18,7 +18,8 @@ class LogFileStreamer(threading.Thread):
                  fixed_level: int | None = None,
                  timestamp_format: str = "%Y-%m-%dT%H:%M:%S%z",
                  message_format: str = "{message}",
-                 fallback_function_name: str = "") -> None:
+                 fallback_function_name: str = "",
+                 filter_messages: list[str] | None = None) -> None:
         super().__init__(name=f"{self.__class__.__name__}-{log_file_path.name}",
                          daemon=True)
         self._running = False
@@ -45,6 +46,7 @@ class LogFileStreamer(threading.Thread):
                 "WARNING": logging.WARNING,
                 "ERR": logging.ERROR,
                 "ERROR": logging.ERROR,
+                "CRIT": logging.CRITICAL,
                 "FTL": logging.CRITICAL,
                 "FATAL": logging.CRITICAL,
             }
@@ -53,6 +55,9 @@ class LogFileStreamer(threading.Thread):
         self.timestamp_format = timestamp_format
         self.message_format = message_format
         self.fallback_function_name = fallback_function_name
+        if filter_messages is None:
+            filter_messages = []
+        self.filter_messages = filter_messages
 
     @property
     def running(self) -> bool:
@@ -75,6 +80,10 @@ class LogFileStreamer(threading.Thread):
         # parse message
         values = defaultdict(str, match.groupdict())
         message = self.message_format.format_map(values)
+
+        # check if message is filtered
+        if message in self.filter_messages:
+            return
 
         # parse timestamp
         timestamp = datetime.strptime(timestamp_raw, self.timestamp_format)
