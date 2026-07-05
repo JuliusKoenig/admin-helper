@@ -14,11 +14,11 @@ def settings_command() -> None:
     console.print(settings.model_dump_json(indent=4))
 
 
-@cli_app.command(name="daemon", help=f"Start the {__title__} Daemon")
+@cli_app.command(name="supervisor", help=f"Start the {__title__} Supervisor Daemon")
 def supervisor_command() -> None:
-    from admin_helper.helper import download_binary, render_supervisord_conf, start_supervisor
+    from admin_helper.helper import render_supervisord_conf, start_supervisor
 
-    console.rule(f"{__title__} Daemon", style="bold blue")
+    console.rule(f"{__title__} Supervisord", style="bold blue")
     logger.debug(f"Starting {__title__} Daemon ...")
 
     # rendering supervisord config
