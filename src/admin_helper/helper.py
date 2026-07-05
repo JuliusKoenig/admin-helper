@@ -1,3 +1,4 @@
+import getpass
 import logging
 import os
 import platform
@@ -61,6 +62,12 @@ def render_file(input_file: str | Path,
     # get template
     template = environment.get_template(input_file.name)
 
+    data["settings"] = settings
+    data["environment"] = os.environ
+    data["user"] = getpass.getuser()
+    data["group"] = os.getgid()
+    data["pwd"] = Path.cwd()
+
     # render template
     logger.debug(f"Data: {data}")
     output = template.render(data)
@@ -115,9 +122,7 @@ def render_supervisord_conf() -> None:
     # render config
     render_file(input_file=TEMPLATE_DIRECTORY_PATH / "supervisord" / "supervisord.conf.j2",
                 output_file=settings.supervisord.config_file_path,
-                overwrite=True,
-                **{"settings": settings,
-                   "environment": os.environ})
+                overwrite=True)
 
     logger.debug(f"Supervisord config rendered successfully.")
 
@@ -130,6 +135,9 @@ def start_supervisor() -> None:
 
     # ensure log file parent directory exist
     settings.supervisord.log_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # ensure child log directory exists
+    settings.supervisord.child_log_directory_path.mkdir(parents=True, exist_ok=True)
 
     # cleanup log file
     if settings.supervisord.log_file_path.is_file():
@@ -185,9 +193,7 @@ def render_traefik_conf() -> None:
     logger.debug(f"Rendering static config to '{settings.traefik.config_file_path}' ...")
     render_file(input_file=TEMPLATE_DIRECTORY_PATH / "traefik" / "traefik.yaml.j2",
                 output_file=settings.traefik.config_file_path,
-                overwrite=True,
-                **{"settings": settings,
-                   "environment": os.environ})
+                overwrite=True)
 
     # render dynamic config
     logger.debug(f"Rendering dynamic config to '{settings.traefik.dynamic_file_path}' ...")

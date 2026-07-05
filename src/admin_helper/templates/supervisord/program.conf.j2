@@ -1,14 +1,9 @@
-{# Blank line are here to separate programs #}
-
-
 [program:{{ program.name }}]
 command={{ program.command }}
 directory={{ program.directory }}
 user={{ program.user }}
 autostart={{ "true" if program.autostart else "false" }}
 autorestart={{ "true" if program.autorestart else "false" }}
-{#stdout_logfile={{ program.stdout_logfile }}#}
-{#stderr_logfile={{ program.stderr_logfile }}#}
 redirect_stderr=false
 stopsignal=TERM
 stopasgroup=true

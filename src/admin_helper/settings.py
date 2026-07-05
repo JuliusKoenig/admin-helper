@@ -1,4 +1,5 @@
 import encodings
+import getpass
 import logging
 import platform
 import sys
@@ -9,6 +10,8 @@ from typing import IO, Any
 
 from pydantic import Field, BaseModel, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from admin_helper import __name__ as __module_name__
 
 LOG_DIRECTORY = Path("var") / "log"
 
@@ -159,6 +162,9 @@ class Settings(BaseSettings):
         log_file_name: str = Field(default="main.log",
                                    title="SupervisorD Log File name",
                                    description="The name of the supervisord log file.")
+        socket_file_name: str = Field(default="supervisord.sock",
+                                      title="SupervisorD Socket File name",
+                                      description="The name of the supervisord socket file.")
 
         class LogLevel(str, Enum):
             ERROR = "ERROR"
@@ -188,13 +194,13 @@ class Settings(BaseSettings):
             name: str = Field(default=...,
                               title="SupervisorD Programs",
                               description="The programs name")
-            command: str = Field(default=...,
-                                 title="SupervisorD Program Command",
-                                 description="The command of the SupervisorD program")
-            directory: Path = Field(default=...,
+            subcommand: str = Field(default=...,
+                                    title="SupervisorD Programs Subcommand",
+                                    description="The programs subcommand")
+            directory: Path = Field(default_factory=Path.cwd,
                                     title="SupervisorD Program Directory",
                                     description="The directory of the SupervisorD program")
-            user: str = Field(default=...,
+            user: str = Field(default_factory=getpass.getuser,
                               title="SupervisorD Program User",
                               description="The user of the SupervisorD program")
             autostart: bool = Field(default=True,
@@ -203,14 +209,16 @@ class Settings(BaseSettings):
             autorestart: bool = Field(default=True,
                                       title="SupervisorD Program Autorestart",
                                       description="Whether the SupervisorD program autorestart")
-            # stdout_logfile: bool = Field(default=True,
-            #                              title="SupervisorD Program Stdout",
-            #                              description="Whether the SupervisorD program stdout logfile")
-            # stderr_logfile: bool = Field(default=True,)
             environment: dict[str, str] = Field(default_factory=dict,
                                                 title="SupervisorD Program Environment",
                                                 description="The environment of the SupervisorD program")
 
+            def __init__(self, /, **data: Any):
+                super().__init__(**data)
+
+            @property
+            def command(self) -> str:
+                return f"python -m {__module_name__} {self.subcommand}"
 
         @property
         def config_file_path(self) -> Path:
@@ -225,8 +233,20 @@ class Settings(BaseSettings):
             return LOG_DIRECTORY / "supervisord" / self.log_file_name
 
         @property
+        def socket_file_path(self) -> Path:
+            return settings.run_directory / "supervisord" / self.socket_file_name
+
+        @property
+        def child_log_directory_path(self) -> Path:
+            return self.log_file_path.parent / "child-log"
+
+        @property
         def programs(self) -> list[_Programs]:
-            return []
+            programs = [
+                self._Programs(name="Traefik",
+                               subcommand="traefik")
+            ]
+            return programs
 
     supervisord: SupervisorD = Field(default_factory=SupervisorD,
                                      title="SupervisorD Settings",
@@ -413,13 +433,6 @@ class Settings(BaseSettings):
                     service="supervisord-dashboard",
                     entry_points=["http"],
                     strip_prefix="/supervisord"
-                ))
-                routers.append(Settings.Traefik._Router(
-                    name="supervisord-api",
-                    paths=["/supervisor/", "/program/"],
-                    middlewares=["auth-basic"],
-                    service="supervisord-dashboard",
-                    entry_points=["http"]
                 ))
             if settings.traefik.dashboard:
                 routers.append(Settings.Traefik._Router(

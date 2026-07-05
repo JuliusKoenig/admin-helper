@@ -1,12 +1,23 @@
 [supervisord]
 loglevel={{ settings.supervisord.log_level }}
 logfile={{ settings.supervisord.log_file_path | unix_path }}
-pidfile={{ settings.supervisord.pid_file_path | unix_path }}{% if settings.supervisord.dashboard %}
+childlogdir={{ settings.supervisord.child_log_directory_path | unix_path }}
+pidfile={{ settings.supervisord.pid_file_path | unix_path }}
+
+[rpcinterface:supervisor]
+supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+[unix_http_server]
+file = {{ settings.supervisord.socket_file_path | unix_path }}
+chmod = 0777
+chown = {{ user }}:{{ group }}
+
+[supervisorctl]
+serverurl = unix://{{ settings.supervisord.socket_file_path | unix_path }}
+prompt = admin-helper(supervisor){% if settings.supervisord.dashboard %}
 
 [inet_http_server]
 port={{ settings.supervisord.host }}:{{ settings.supervisord.port }}{% endif %}
-
-[rpcinterface:supervisor]
-supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface{% for program in settings.supervisord.programs %}
-    {% include "program.conf.j2" %}
+{% for program in settings.supervisord.programs %}
+{% include "program.conf.j2" %}
 {% endfor %}
