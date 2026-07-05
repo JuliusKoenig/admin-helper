@@ -185,7 +185,32 @@ class Settings(BaseSettings):
                                 description="Whether to enable the SupervisorD dashboard")
 
         class _Programs(BaseModel):
-            ...
+            name: str = Field(default=...,
+                              title="SupervisorD Programs",
+                              description="The programs name")
+            command: str = Field(default=...,
+                                 title="SupervisorD Program Command",
+                                 description="The command of the SupervisorD program")
+            directory: Path = Field(default=...,
+                                    title="SupervisorD Program Directory",
+                                    description="The directory of the SupervisorD program")
+            user: str = Field(default=...,
+                              title="SupervisorD Program User",
+                              description="The user of the SupervisorD program")
+            autostart: bool = Field(default=True,
+                                    title="SupervisorD Program Autostart",
+                                    description="Whether the SupervisorD program autostart")
+            autorestart: bool = Field(default=True,
+                                      title="SupervisorD Program Autorestart",
+                                      description="Whether the SupervisorD program autorestart")
+            # stdout_logfile: bool = Field(default=True,
+            #                              title="SupervisorD Program Stdout",
+            #                              description="Whether the SupervisorD program stdout logfile")
+            # stderr_logfile: bool = Field(default=True,)
+            environment: dict[str, str] = Field(default_factory=dict,
+                                                title="SupervisorD Program Environment",
+                                                description="The environment of the SupervisorD program")
+
 
         @property
         def config_file_path(self) -> Path:
