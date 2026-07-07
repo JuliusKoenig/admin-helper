@@ -17,63 +17,6 @@ from admin_helper.logger import logger
 from admin_helper.settings import settings, Settings
 
 
-def render_file(input_file: str | Path,
-                output_file: str | Path,
-                overwrite: bool = False,
-                environment_options: dict[str, Any] | None = None,
-                **data) -> None:
-    input_file = Path(input_file)
-    output_file = Path(output_file)
-
-    logger.debug(f"Rendering file from '{input_file}' to '{output_file}' ...")
-
-    # check if input file exist
-    if not input_file.is_file():
-        raise FileNotFoundError(input_file)
-
-    # check if output file already exist
-    if output_file.is_file():
-        if not overwrite:
-            raise FileExistsError(output_file)
-        output_file.unlink()
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-
-    # set default environment options
-    if environment_options is None:
-        environment_options = {
-            "undefined": StrictUndefined,
-        }
-
-    # create file system loader
-    environment_options["loader"] = FileSystemLoader(input_file.parent)
-
-    # create environment
-    logger.debug(f"Environment options: {environment_options}")
-    environment = Environment(**environment_options)
-
-    # set filter
-    environment.filters["unix_path"] = lambda path: str(path).replace("\\", "/") if platform.system() == "Windows" else str(path)
-
-    # get template
-    template = environment.get_template(input_file.name)
-
-    data["settings"] = settings
-    data["environment"] = os.environ
-    data["user"] = getpass.getuser()
-    data["group"] = os.getgid()
-    data["pwd"] = Path.cwd()
-
-    # render template
-    logger.debug(f"Data: {data}")
-    output = template.render(data)
-
-    logger.debug(f"Rendered output: {output}")
-
-    # write output to file
-    with output_file.open(mode="w") as output_file:
-        output_file.write(output)
-
-    logger.debug(f"File '{output_file}' rendered successfully.")
 
 
 # def download_binary(name: str,
