@@ -1,6 +1,6 @@
 [program:{{ program.name }}]
 command={{ program.command }}
-directory={{ program.directory }}
+directory={{ program.cwd }}
 user={{ program.user }}
 autostart={{ "true" if program.autostart else "false" }}
 autorestart={{ "true" if program.autorestart else "false" }}
@@ -8,4 +8,4 @@ redirect_stderr=false
 stopsignal=TERM
 stopasgroup=true
 killasgroup=true
-{% if program.environment %}environment={% for key, value in program.environment.items() %}{{ key }}="{{ value }}"{% if not loop.last %},{% endif %}{% endfor %}{% endif %}
+{#{% if program.environment %}environment={% for key, value in program.environment.items() %}{{ key }}="{{ value }}"{% if not loop.last %},{% endif %}{% endfor %}{% endif %}#}

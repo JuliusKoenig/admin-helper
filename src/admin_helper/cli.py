@@ -4,7 +4,6 @@ from admin_helper import __title__
 from admin_helper.logger import logger
 from admin_helper.settings import settings
 from admin_helper.console import console
-from admin_helper.supervisor import Supervisor
 
 cli_app = Typer()
 
@@ -15,32 +14,11 @@ def settings_command() -> None:
     console.print(settings.model_dump_json(indent=4))
 
 
-@cli_app.command(name="supervisor", help=f"Start the {__title__} Supervisor Daemon")
+@cli_app.command(name="supervisor", help=f"Start the {__title__} Supervisor")
 def supervisor_command() -> None:
-    from admin_helper.helper import render_supervisord_conf, start_supervisor
+    from admin_helper.supervisor.main import supervisor
 
-    console.rule(f"{__title__} Supervisord", style="bold blue")
+    console.rule(f"{__title__} Supervisor", style="bold blue")
     logger.debug(f"Starting {__title__} Daemon ...")
 
-    supervisor = Supervisor()
-
-    print()
-
-@cli_app.command(name="traefik", help=f"Start the {__title__} Traefik")
-def traefik_command() -> None:
-    from admin_helper.helper import download_binary, render_traefik_conf, start_traefik
-
-    console.rule(f"{__title__} Traefik", style="bold blue")
-    logger.debug(f"Starting {__title__} Traefik ...")
-
-    # check if traefik binary exist
-    if not settings.traefik.binary_file_path.is_file():
-        # download traefik binary
-        download_binary(name="Traefik",
-                        sub_settings=settings.traefik)
-
-    # # rendering traefik config
-    render_traefik_conf()
-
-    # starting traefik
-    start_traefik()
+    supervisor.start()

@@ -70,60 +70,55 @@ class TarRotatingFileHandler(RotatingFileHandler):
                         os.remove(log)
 
 
-def get_logger(_settings: Settings.Logger) -> logging.Logger:
-    _logger = logging.getLogger(__package_name__)
+logger = logging.getLogger(__package_name__)
 
-    # set log level
-    _logger.setLevel(_settings.level.value)
+# set log level
+logger.setLevel(settings.logger.level.value)
 
-    # add null handler
-    null_handler = logging.NullHandler()
-    _logger.addHandler(null_handler)
+# add null handler
+null_handler = logging.NullHandler()
+logger.addHandler(null_handler)
 
-    # add console handler
-    if _settings.console:
-        ch = RichHandler(
-            console=console,
-            show_time=_settings.console_rich_show_time,
-            markup=_settings.console_rich_markup,
-            show_level=_settings.console_rich_show_level,
-            show_path=_settings.console_rich_show_path
-        )
-        ch.set_name(_logger.name)
-        if _settings.console_level is not None:
-            ch.setLevel(_settings.console_level.value)
-        ch.setFormatter(Formatter(_settings.console_format))
-        _logger.addHandler(ch)
+# add console handler
+if settings.logger.console:
+    ch = RichHandler(
+        console=console,
+        show_time=settings.logger.console_rich_show_time,
+        markup=settings.logger.console_rich_markup,
+        show_level=settings.logger.console_rich_show_level,
+        show_path=settings.logger.console_rich_show_path
+    )
+    ch.set_name(logger.name)
+    if settings.logger.console_level is not None:
+        ch.setLevel(settings.logger.console_level.value)
+    ch.setFormatter(Formatter(settings.logger.console_format))
+    logger.addHandler(ch)
 
-    # add file handler
-    if _settings.file:
-        # check if log_file_path is set
-        if _settings.file_path is None:
-            raise ValueError("Log file path not set")
+# add file handler
+if settings.logger.file:
+    # check if log_file_path is set
+    if settings.logger.file_path is None:
+        raise ValueError("Log file path not set")
 
-        # check if log_file_path parent directory exists
-        if not _settings.file_path.parent.exists():
-            raise FileNotFoundError(f"Log file path parent directory not exist: '{_settings.file_path.parent}'")
+    # check if log_file_path parent directory exists
+    if not settings.logger.file_path.parent.exists():
+        raise FileNotFoundError(f"Log file path parent directory not exist: '{settings.logger.file_path.parent}'")
 
-        fh = TarRotatingFileHandler(
-            name=_logger.name,
-            filename=_settings.file_path,
-            mode=_settings.file_mode,
-            max_bytes=_settings.file_max_bytes,
-            backup_count=_settings.file_backup_count,
-            encoding=_settings.file_encoding,
-            delay=_settings.file_delay,
-            archive_backup_count=_settings.file_archive_backup_count
-        )
-        if _settings.file_level is not None:
-            fh.setLevel(_settings.file_level.value)
-        fh.setFormatter(Formatter(_settings.file_format))
-        _logger.addHandler(fh)
+    fh = TarRotatingFileHandler(
+        name=logger.name,
+        filename=settings.logger.file_path,
+        mode=settings.logger.file_mode,
+        max_bytes=settings.logger.file_max_bytes,
+        backup_count=settings.logger.file_backup_count,
+        encoding=settings.logger.file_encoding,
+        delay=settings.logger.file_delay,
+        archive_backup_count=settings.logger.file_archive_backup_count
+    )
+    if settings.logger.file_level is not None:
+        fh.setLevel(settings.logger.file_level.value)
+    fh.setFormatter(Formatter(settings.logger.file_format))
+    logger.addHandler(fh)
 
-    # log first message
-    _logger.debug(f"Logger '{_logger.name}' initialized.")
+# log first message
+logger.debug(f"Logger '{logger.name}' initialized.")
 
-    return _logger
-
-
-logger = get_logger(settings.logger)
