@@ -53,3 +53,48 @@ def supervisor_render_command() -> None:
         console.rule("Supervisor Rendering failed", style="bold red")
 
     raise typer.Exit(0 if any(result_and_message[0] for result_and_message in result.values()) else 1)
+
+
+
+cli_app.add_typer(supervisor_cli_app)
+
+apache_cli_app = typer.Typer(name="apache", help="Apache Commands")
+
+@apache_cli_app.command(name="settings", help=f"Show the {__title__} Apache settings")
+def apache_settings_command() -> None:
+    console.rule("Settings", style="bold blue")
+    console.print(settings.apache.model_dump_json(indent=4))
+
+
+@apache_cli_app.command(name="conftest", help=f"Check the {__title__} Apache configuration")
+def apache_conftest_command() -> None:
+    from admin_helper.apache import ApacheService
+
+    console.rule(f"Apache Configuration Test", style="bold blue")
+    result = ApacheService.test()
+    for render_file_name, result_and_message in result.items():
+        console.print(f"[slate_blue1]File[/slate_blue1]: {render_file_name} -> {result_and_message[1]}")
+    if any(result_and_message[0] for result_and_message in result.values()):
+        console.rule("Apache Configuration Test Passed", style="bold green")
+    else:
+        console.rule("Apache Configuration Test Failed", style="bold red")
+
+    raise typer.Exit(0 if any(result_and_message[0] for result_and_message in result.values()) else 1)
+
+
+@apache_cli_app.command(name="render", help=f"Render the {__title__} Apache configuration")
+def apache_render_command() -> None:
+    from admin_helper.apache import ApacheService
+
+    console.rule(f"Apache Rendering", style="bold blue")
+    result = ApacheService.render()
+    for render_file_name, result_and_message in result.items():
+        console.print(f"[slate_blue1]File[/slate_blue1]: {render_file_name} -> {result_and_message[1]}")
+    if any(result_and_message[0] for result_and_message in result.values()):
+        console.rule("Apache Rendering succeeded", style="bold green")
+    else:
+        console.rule("Apache Rendering failed", style="bold red")
+
+    raise typer.Exit(0 if any(result_and_message[0] for result_and_message in result.values()) else 1)
+
+cli_app.add_typer(apache_cli_app)
