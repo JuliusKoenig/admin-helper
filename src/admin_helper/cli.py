@@ -16,9 +16,9 @@ def settings_command() -> None:
 
 @cli_app.command(name="supervisor", help=f"Start the {__title__} Supervisor")
 def supervisor_command() -> None:
-    from admin_helper.supervisor.main import supervisor
+    from admin_helper.supervisor import SupervisorService
 
     console.rule(f"{__title__} Supervisor", style="bold blue")
     logger.debug(f"Starting {__title__} Daemon ...")
 
-    supervisor.start()
+    SupervisorService.start()
