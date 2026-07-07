@@ -24,6 +24,7 @@ class SupervisorLoggerFilter(logging.Filter):
             return False
         return True
 
+
 class SupervisorLogger(logging.Logger):
     def __init__(self):
         super().__init__(name=f"{__package_name__}.supervisor.main")
@@ -31,7 +32,6 @@ class SupervisorLogger(logging.Logger):
         _filter = SupervisorLoggerFilter()
         _filter.logger = self
         self.addFilter(_filter)
-
 
         # implement required methods for supervisor logging interface
         self.blather = lambda msg, *a, **kw: self._log(LevelsByName.DEBG, msg, a, **{"stacklevel": 2, **kw})
@@ -67,12 +67,14 @@ class SupervisorProgram:
     autorestart: bool = field(default=True)
 
 
+
+
 @dataclass
-class SupervisorService(RenderFile,
-                        name="supervisor",
-                        src="supervisord.conf.j2",
-                        dest=settings.config_directory / "supervisord.conf",
-                        overwrite=True):
+class _SupervisorService(RenderFile,
+                         name="supervisor",
+                         src="supervisord.conf.j2",
+                         dest=settings.config_directory / "supervisord.conf",
+                         overwrite=True):
     _programs: list[SupervisorProgram] = field(default_factory=list,
                                                init=False)
     pid_file_path: Path = field(default=settings.run_directory / "supervisord" / "supervisord.pid")
@@ -112,7 +114,7 @@ class SupervisorService(RenderFile,
             self.pid_file_path.unlink()
 
 
-SupervisorService = SupervisorService()
+SupervisorService = _SupervisorService()
 
 __all__ = ["SupervisorService", "SupervisorProgram"]
 
