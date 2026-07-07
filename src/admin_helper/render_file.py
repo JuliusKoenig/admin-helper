@@ -1,7 +1,5 @@
 import getpass
 import sys
-import warnings
-from copy import deepcopy
 from dataclasses import dataclass, field
 import os
 import platform
@@ -24,6 +22,12 @@ class RenderFile:
     environment_options: dict[str, Any] = field(init=False)
     _subfiles: list["RenderFile"] = field(init=False)
     _parent: Optional["RenderFile"] = field(default=None, init=False)
+
+    __str_name__: str | None = "RenderFile"
+    __str_attrs__ = ["name", "src", "dest"]
+
+    def __str__(self) -> str:
+        return f"{self.__str_name__}(" + ", ".join(f"{attr}={getattr(self, attr)}" for attr in self.__str_attrs__) + ")"
 
     def __init_subclass__(cls,
                           *,
@@ -79,12 +83,24 @@ class RenderFile:
         self._subfiles = []
         self.add_subfile(*subfiles)
 
+        logger.debug(f"Initialized RenderFile: {self}")
+
+    def _get_environment(self) -> Environment:
+        logger.debug(f"Environment options: {self.environment_options}")
+        environment_options = self.environment_options.copy()
+        environment_options["loader"] = FileSystemLoader(self.src.parent)
+        environment = Environment(**environment_options)
+
+        # set filter
+        environment.filters["unix_path"] = lambda path: str(path).replace("\\", "/") if platform.system() == "Windows" else str(path)
+        return environment
+
     @property
     def parent(self) -> Optional["RenderFile"]:
         return self._parent
 
     @property
-    def _data(self) -> dict[str, Any]:
+    def data(self) -> dict[str, Any]:
         data = {}
 
         def add(k: str, v: Any) -> None:
@@ -132,53 +148,79 @@ class RenderFile:
             if subfile in self.subfiles:
                 raise RuntimeError(f"'{subfile}' already added.")
             self._subfiles.append(subfile)
-            _ = self._data # validate data
+            _ = self.data  # validate data
 
-    def render(self,
-               **data) -> None:
-        logger.debug(f"Rendering file {self} ...")
+    def test(self) -> dict[str, tuple[bool, str]]:
+        result = {}
+        try:
+            logger.debug(f"Testing file {self} ...")
 
-        # check if input file exist
-        if not self.src.is_file():
-            raise FileNotFoundError(f"{self.src} not found.")
+            # check if input file exist
+            if not self.src.is_file():
+                raise FileNotFoundError(f"{self.src} not found.")
 
-        # check if output file already exist
-        if self.dest.is_file():
-            if not self.overwrite:
-                raise FileExistsError(f"{self.dest} already exists. Set overwrite=True to overwrite.")
-            self.dest.unlink()
-        self.dest.parent.mkdir(parents=True, exist_ok=True)
+            # get environment
+            environment = self._get_environment()
 
-        # create file system loader
-        self.environment_options["loader"] = FileSystemLoader(self.src.parent)
+            # get template
+            template = environment.get_template(self.src.name)
 
-        # create environment
-        logger.debug(f"Environment options: {self.environment_options}")
-        environment = Environment(**self.environment_options)
+            # render template
+            logger.debug(f"Data: {self.data}")
+            output = template.render(self.data)
 
-        # set filter
-        environment.filters["unix_path"] = lambda path: str(path).replace("\\", "/") if platform.system() == "Windows" else str(path)
+            logger.debug(f"Output: {output}")
 
-        # get template
-        template = environment.get_template(self.src.name)
+            logger.debug(f"File {self} has been tested successfully.")
+            result[self.name] = (True, "[green]Test passed.[/green]")
+        except Exception as e:
+            result[self.name] = (False, f"[red]Test failed[/red]: {e}")
 
-        for key, value in self._data.items():
-            if key in data:
-                warnings.warn(f"Conflicting data key '{key}' in render() arguments. Overwriting with provided value.")
-            data[key] = value
+        # test subfiles
+        for subfile in self.subfiles:
+            result.update(subfile.test())
 
-        # render template
-        logger.debug(f"Data: {data}")
-        output = template.render(data)
+        return result
 
-        logger.debug(f"Rendered output: {output}")
+    def render(self) -> dict[str, tuple[bool, str]]:
+        result = {}
+        try:
+            logger.debug(f"Rendering file {self} ...")
 
-        # write output to file
-        with self.dest.open(mode="w") as output_file:
-            output_file.write(output)
+            # check if input file exist
+            if not self.src.is_file():
+                raise FileNotFoundError(f"{self.src} not found.")
 
-        logger.debug(f"File {self} has been rendered.")
+            # check if output file already exist
+            if self.dest.is_file():
+                if not self.overwrite:
+                    raise FileExistsError(f"{self.dest} already exists. Set overwrite=True to overwrite.")
+                self.dest.unlink()
+            self.dest.parent.mkdir(parents=True, exist_ok=True)
+
+            # get environment
+            environment = self._get_environment()
+
+            # get template
+            template = environment.get_template(self.src.name)
+
+            # render template
+            logger.debug(f"Data: {self.data}")
+            output = template.render(self.data)
+
+            logger.debug(f"Output: {output}")
+
+            # write output to file
+            with self.dest.open(mode="w") as output_file:
+                output_file.write(output)
+
+            logger.debug(f"File {self} has been rendered.")
+            result[self.name] = (True, "✅ - Rendered successfully.")
+        except Exception as e:
+            result[self.name] = (False, f"❌ - Render failed: {e}")
 
         # render subfiles
         for subfile in self.subfiles:
-            subfile.render(**data)
+            result.update(subfile.render())
+
+        return result

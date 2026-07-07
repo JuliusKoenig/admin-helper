@@ -75,6 +75,8 @@ class _SupervisorService(RenderFile,
                          src="supervisord.conf.j2",
                          dest=settings.config_directory / "supervisord.conf",
                          overwrite=True):
+    __str_name__: str | None = "SupervisorService"
+
     _programs: list[SupervisorProgram] = field(default_factory=list,
                                                init=False)
     pid_file_path: Path = field(default=settings.run_directory / "supervisord" / "supervisord.pid")
