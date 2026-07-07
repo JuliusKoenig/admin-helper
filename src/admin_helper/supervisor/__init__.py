@@ -1,6 +1,7 @@
 import getpass
 import logging
 from dataclasses import dataclass, field
+from logging import LogRecord
 from pathlib import Path
 
 from supervisor.options import ServerOptions
@@ -13,17 +14,37 @@ from admin_helper.logger import logger as main_logger
 from admin_helper.render_file import RenderFile
 from admin_helper.settings import settings
 
-class _SupervisorLogger(logging.Logger):
-    ...
 
-logger = _SupervisorLogger(name=f"{__package_name__}.supervisor.main")
-logger.parent = main_logger
-logger.blather = lambda _msg, **kw: logger.log(LevelsByName.BLAT, _msg, **kw)
-logger.trace = lambda _msg, **kw: logger.log(LevelsByName.TRAC, _msg, **kw)
-logger.close = lambda: None
+class SupervisorLoggerFilter(logging.Filter):
+    logger: "SupervisorLogger"
+
+    def filter(self, record: LogRecord) -> bool:
+        if record.msg in ["Server 'inet_http_server' running without any HTTP authentication checking",
+                          "Server 'unix_http_server' running without any HTTP authentication checking"]:
+            return False
+        return True
+
+class SupervisorLogger(logging.Logger):
+    def __init__(self):
+        super().__init__(name=f"{__package_name__}.supervisor.main")
+        self.parent = main_logger
+        _filter = SupervisorLoggerFilter()
+        _filter.logger = self
+        self.addFilter(_filter)
 
 
-class _SupervisorServerOptions(ServerOptions):
+        # implement required methods for supervisor logging interface
+        self.blather = lambda msg, *a, **kw: self._log(LevelsByName.DEBG, msg, a, **{"stacklevel": 2, **kw})
+        self.trace = lambda msg, *a, **kw: self._log(LevelsByName.DEBG, msg, a, **{"stacklevel": 2, **kw})
+        self.close = lambda: None
+
+        self.filter_msgs = []
+
+
+logger = SupervisorLogger()
+
+
+class SupervisorServerOptions(ServerOptions):
     logger: logging.Logger
 
     def make_logger(self):
@@ -47,11 +68,11 @@ class SupervisorProgram:
 
 
 @dataclass
-class _SupervisorService(RenderFile,
-                         name="supervisor",
-                         src="supervisord.conf.j2",
-                         dest=settings.config_directory / "supervisord.conf",
-                         overwrite=True):
+class SupervisorService(RenderFile,
+                        name="supervisor",
+                        src="supervisord.conf.j2",
+                        dest=settings.config_directory / "supervisord.conf",
+                        overwrite=True):
     _programs: list[SupervisorProgram] = field(default_factory=list,
                                                init=False)
     pid_file_path: Path = field(default=settings.run_directory / "supervisord" / "supervisord.pid")
@@ -72,7 +93,7 @@ class _SupervisorService(RenderFile,
 
         first = True
         while 1:
-            options = _SupervisorServerOptions()
+            options = SupervisorServerOptions()
             options.realize(["-c",
                              self.dest,
                              "-n"], doc=__doc__)
@@ -91,7 +112,7 @@ class _SupervisorService(RenderFile,
             self.pid_file_path.unlink()
 
 
-SupervisorService = _SupervisorService()
+SupervisorService = SupervisorService()
 
 __all__ = ["SupervisorService", "SupervisorProgram"]
 
