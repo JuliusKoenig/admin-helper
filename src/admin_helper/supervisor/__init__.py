@@ -99,7 +99,7 @@ class _SupervisorService(RenderFile,
         while 1:
             options = SupervisorServerOptions()
             options.realize(["-c",
-                             self.dest,
+                             str(self.dest),
                              "-n"], doc=__doc__)
             options.first = first
             options.test = False

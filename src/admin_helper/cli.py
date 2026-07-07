@@ -1,4 +1,4 @@
-from typer import Typer
+import typer
 
 from admin_helper import __title__
 from admin_helper.logger import logger
