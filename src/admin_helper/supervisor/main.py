@@ -21,6 +21,7 @@ class SupervisorServerOptions(ServerOptions):
         self.logger = supervisor.logger  # self.loglevel)
         self.logger.blather = lambda _msg, **kw: self.logger.log(LevelsByName.BLAT, _msg, **kw)
         self.logger.trace = lambda _msg, **kw: self.logger.log(LevelsByName.TRAC, _msg, **kw)
+        self.logger.close = lambda: None
         for msg in self.parse_criticals:
             self.logger.critical(msg)
         for msg in self.parse_warnings:
@@ -92,8 +93,8 @@ class SupervisorService:
                 break
 
         # clean up pid file if exist
-        if settings.supervisord.pid_file_path.is_file():
-            settings.supervisord.pid_file_path.unlink()
+        if self.pid_file_path.is_file():
+            self.pid_file_path.unlink()
 
 
 supervisor = SupervisorService()
