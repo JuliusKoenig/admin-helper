@@ -4,6 +4,7 @@ from admin_helper import __title__
 from admin_helper.logger import logger
 from admin_helper.settings import settings
 from admin_helper.console import console
+from admin_helper.supervisor import Supervisor
 
 cli_app = Typer()
 
@@ -21,11 +22,9 @@ def supervisor_command() -> None:
     console.rule(f"{__title__} Supervisord", style="bold blue")
     logger.debug(f"Starting {__title__} Daemon ...")
 
-    # rendering supervisord config
-    render_supervisord_conf()
+    supervisor = Supervisor()
 
-    # starting supervisord
-    start_supervisor()
+    print()
 
 @cli_app.command(name="traefik", help=f"Start the {__title__} Traefik")
 def traefik_command() -> None:

@@ -81,9 +81,9 @@ class Settings(BaseSettings):
         console_rich_show_time: bool = Field(
             default=False, title="Show Time in Console", description="Whether to show the time in the console")
         console_rich_show_level: bool = Field(
-            default=True, title="Show Level in Console", description="Whether to show the level in the console")
+            default=False, title="Show Level in Console", description="Whether to show the level in the console")
         console_rich_show_path: bool = Field(
-            default=True, title="Show Path in Console", description="Whether to show the path in the console")
+            default=False, title="Show Path in Console", description="Whether to show the path in the console")
         file: bool = Field(default=False, title="File Logging",
                            description="Whether to log to a file")
         file_path: Path | None = Field(

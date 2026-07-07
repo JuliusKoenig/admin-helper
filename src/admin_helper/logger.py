@@ -11,6 +11,12 @@ from admin_helper.console import console
 from admin_helper.settings import settings, Settings
 
 
+class Formatter(logging.Formatter):
+    def format(self, record) -> str:
+        if hasattr(record, "markup"):
+            return str(record.msg)
+        return super().format(record)
+
 class TarRotatingFileHandler(RotatingFileHandler):
     """
     RotatingFileHandler that archives old log files as tar.gz files
@@ -86,7 +92,7 @@ def get_logger(_settings: Settings.Logger) -> logging.Logger:
         ch.set_name(_logger.name)
         if _settings.console_level is not None:
             ch.setLevel(_settings.console_level.value)
-        ch.setFormatter(logging.Formatter(_settings.console_format))
+        ch.setFormatter(Formatter(_settings.console_format))
         _logger.addHandler(ch)
 
     # add file handler
@@ -111,7 +117,7 @@ def get_logger(_settings: Settings.Logger) -> logging.Logger:
         )
         if _settings.file_level is not None:
             fh.setLevel(_settings.file_level.value)
-        fh.setFormatter(logging.Formatter(_settings.file_format))
+        fh.setFormatter(Formatter(_settings.file_format))
         _logger.addHandler(fh)
 
     # log first message

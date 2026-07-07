@@ -4,38 +4,23 @@
 	"name": "Python 3",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
 	"image": "mcr.microsoft.com/devcontainers/python:2-3.14-trixie",
+
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	// "features": {},
+
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	"forwardPorts": [
-		8000
-	],
+	// "forwardPorts": [],
+
 	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "bash setup.sh",
+	// "postCreateCommand": "pip3 install --user -r requirements.txt",
+
+	// Configure tool-specific properties.
+  "customizations" : {
+    "jetbrains" : {
+      "backend" : "PyCharm"
+    }
+  },
+
 	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
-	"remoteUser": "root",
-	// set env vars
-	"remoteEnv": {
-		"ADMIN_HELPER_TEMP_DIR": "/tmp",
-		"ADMIN_HELPER_USERS__admin__PASSWORD": "admin",
-		"ADMIN_HELPER_USERS__admin__IS_ADMIN": "true",
-		"ADMIN_HELPER_USERS__user__PASSWORD": "user",
-		"ADMIN_HELPER_SUPERVISOR_CONFIG_PATH": "/etc/supervisor/conf.d",
-		"ADMIN_HELPER_SUPERVISOR_BINARY_PATH": "/usr/bin/supervisord",
-		"ADMIN_HELPER_SUPERVISOR_LOGGER__LEVEL": "DEBUG",
-		"ADMIN_HELPER_DASHBOARD_LOGGER__LEVEL": "DEBUG",
-		"ADMIN_HELPER_TRAEFIK_PATH": "/opt/traefik",
-		"ADMIN_HELPER_TRAEFIK_VERSION": "3.6.12",
-		"ADMIN_HELPER_TRAEFIK_BINARY_NAME": "traefik",
-		"ADMIN_HELPER_TRAEFIK_HOST": "0.0.0.0",
-		"ADMIN_HELPER_TRAEFIK_PORT": "80",
-		"ADMIN_HELPER_TRAEFIK_LOGGER__LEVEL": "DEBUG",
-		"ADMIN_HELPER_TTYD_VERSION": "1.7.7",
-		"ADMIN_HELPER_TTYD_PATH": "/opt/ttyd",
-		"ADMIN_HELPER_TTYD_BINARY_NAME": "ttyd",
-		"ADMIN_HELPER_FILE_BROWSER_VERSION": "2.54.0",
-		"ADMIN_HELPER_FILE_BROWSER_PATH": "/opt/filebrowser",
-		"ADMIN_HELPER_FILE_BROWSER_BINARY_NAME": "filebrowser",
-		"ADMIN_HELPER_MODULES": "[{ \"type\": \"ttyd\", \"name\": \"ttyd\", \"enabled\": true, \"path\": \"/terminal\", \"logger\": { \"level\": \"DEBUG\" } }, { \"type\": \"filebrowser\", \"name\": \"filebrowser\", \"enabled\": true, \"path\": \"/file_browser\", \"logger\": { \"level\": \"DEBUG\" } }]"
-	}
+	// "remoteUser": "root"
 }

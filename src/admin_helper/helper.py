@@ -8,13 +8,16 @@ import signal
 import subprocess
 import tarfile
 import zipfile
-from logging import Logger
 from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from passlib.apache import HtpasswdFile
 from wiederverwendbar.functions.download_file import simple_download_file
+from supervisor.loggers import Logger as _SupervisorLogger, LogRecord as SupervisorLogRecord
+from supervisor.states import SupervisorStates
+from supervisor.supervisord import go as supervisord_go
+from supervisor.options import ServerOptions
 
 from admin_helper.log_file_streamer import LogFileStreamer
 from admin_helper.logger import logger
@@ -116,6 +119,59 @@ def download_binary(name: str,
     logger.debug(f"{name} binary downloaded and moved successfully to '{sub_settings.binary_file_path}'.")
 
 
+class SupervisorLogger(_SupervisorLogger):
+    parent: logging.Logger | None
+    propagate: bool = False
+
+    def log(self, level, msg, **kw):
+        record = SupervisorLogRecord(level, msg, **kw)
+
+        do_log = True
+        if self.parent:
+            if not self.propagate:
+                do_log = False
+            try:
+                fn, lno, func, sinfo = logging.Logger.findCaller(self,
+                                                                 False,
+                                                                 1)
+            except ValueError:
+                fn, lno, func, sinfo = "(unknown file)", 0, "(unknown function)", None
+
+            if msg == "%(name)r %(channel)s output:\n%(data)s":
+                msg = record.kw["data"]
+
+            record = logging.Logger.makeRecord(self,
+                                               f"{logger.name}.supervisor.main",
+                                               level,
+                                               fn,
+                                               lno,
+                                               msg,
+                                               (),
+                                               None,
+                                               func,
+                                               extra={"markup": False},
+                                               sinfo=sinfo)
+            self.parent.handle(record)
+
+        if do_log:
+            for handler in self.handlers:
+                if level >= handler.level:
+                    handler.emit(record)
+
+class SupervisorServerOptions(ServerOptions):
+    logger: SupervisorLogger | None = None
+
+    def make_logger(self):
+        self.logger = SupervisorLogger()  # self.loglevel)
+        self.logger.parent = logger
+        for msg in self.parse_criticals:
+            self.logger.critical(msg)
+        for msg in self.parse_warnings:
+            self.logger.warn(msg)
+        for msg in self.parse_infos:
+            self.logger.info(msg)
+
+
 def render_supervisord_conf() -> None:
     logger.debug(f"Rendering supervisord config ...")
 
@@ -143,43 +199,24 @@ def start_supervisor() -> None:
     if settings.supervisord.log_file_path.is_file():
         settings.supervisord.log_file_path.unlink()
 
-    # cmd
-    cmd = ["supervisord",
-           "-c",
-           str(settings.supervisord.config_file_path),
-           "-n"]
+    print()
 
-    # starting supervisord
-    process = subprocess.Popen(cmd,
-                               stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL)
+    first = True
+    while 1:
+        options = SupervisorServerOptions()
+        options.realize(["-c",
+                         settings.supervisord.config_file_path,
+                         "-n"], doc=__doc__)
+        options.first = first
+        options.test = False
+        supervisord_go(options)
+        options.close_httpservers()
+        options.close_logger()
+        first = False
+        if options.mood < SupervisorStates.RESTARTING:
+            break
 
-    # create logger
-    supervisord_main_logger = Logger(name=f"{logger.name}.supervisord.main")
-    supervisord_main_logger.parent = logger
-
-    # start file streamer
-    log_file_streamer = LogFileStreamer(logger=supervisord_main_logger,
-                                        log_file_path=settings.supervisord.log_file_path,
-                                        pattern=re.compile(
-                                            r"^(?P<timestamp>\d{4}-\d{2}-\d{2} "
-                                            r"\d{2}:\d{2}:\d{2},\d{3}) "
-                                            r"(?P<level>[A-Z]+) "
-                                            r"(?P<message>.*)$"
-                                        ),
-                                        timestamp_format="%Y-%m-%d %H:%M:%S,%f",
-                                        fallback_function_name="supervisord-main",
-                                        filter_messages=["Server 'inet_http_server' running without any HTTP authentication checking"])
-    log_file_streamer.start()
-
-    # wait for process
-    try:
-        process.wait()
-    except KeyboardInterrupt:
-        logger.debug(f"Stopping supervisor ...")
-        process.send_signal(signal.SIGINT)
-        process.wait()
-        logger.debug(f"Supervisor stopped successfully.")
+    print()
 
     # clean up pid file if exist
     if settings.supervisord.pid_file_path.is_file():
@@ -238,9 +275,9 @@ def start_traefik() -> None:
                                stderr=subprocess.DEVNULL)
 
     # create logger
-    traefik_main_logger = Logger(name=f"{logger.name}.traefik.main")
+    traefik_main_logger = logging.Logger(name=f"{logger.name}.traefik.main")
     traefik_main_logger.parent = logger
-    traefik_access_logger = Logger(name=f"{logger.name}.traefik.access")
+    traefik_access_logger = logging.Logger(name=f"{logger.name}.traefik.access")
     traefik_access_logger.parent = logger
 
     # start file streamer
