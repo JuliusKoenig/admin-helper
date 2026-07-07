@@ -15,6 +15,7 @@ LOG_DIRECTORY = Path("var") / "log"
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ADMIN_HELPER_",
                                       env_nested_delimiter="__")
+    debug: bool = Field(default=False, title="Debug", description="Whether to run in debug mode")
     binary_directory: Path = Field(default=Path("usr/local/bin"),
                                    title="Binary Directory",
                                    description="The directory where binaries are stored")
@@ -45,7 +46,7 @@ class Settings(BaseSettings):
                 return int(logging.getLevelName(self.value))
 
         level: LogLevels = Field(
-            default=LogLevels.DEBUG, title="Log Level", description="The log level")
+            default=LogLevels.INFO, title="Log Level", description="The log level")
         console: bool = Field(default=True, title="Console Logging",
                               description="Whether to log to the console")
         console_level: LogLevels | None = Field(
@@ -154,6 +155,14 @@ class Settings(BaseSettings):
     supervisor: Supervisor = Field(default_factory=Supervisor,
                                    title="Supervisor Settings",
                                    description="The supervisor settings")
+
+    def model_post_init(self, context: Any, /):
+        if self.debug:
+            self.logger.level = self.Logger.LogLevels.DEBUG
+            self.logger.console_level = self.Logger.LogLevels.DEBUG
+            self.logger.file_level = self.Logger.LogLevels.DEBUG
+        super().model_post_init(context)
+
 
 
 settings = Settings()
