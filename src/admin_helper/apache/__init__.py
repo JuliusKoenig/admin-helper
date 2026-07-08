@@ -2,7 +2,7 @@ import getpass
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from admin_helper.render_file import RenderFile
+from admin_helper.types.render_file import RenderFile
 from admin_helper.settings import settings
 from admin_helper.supervisor import SupervisorProgram, SupervisorService
 

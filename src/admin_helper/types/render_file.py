@@ -5,44 +5,41 @@ import os
 import platform
 
 from pathlib import Path
-from typing import Any, Union, Optional
+from typing import Any, Union
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from admin_helper import __name__ as __module_name__
+from admin_helper.types.base_object import BaseObject
 from admin_helper.logger import logger
 from admin_helper.settings import settings
 
 
 @dataclass
-class RenderFile:
-    name: str = field(init=False)
+class RenderFile(BaseObject, abstract=True):
     src: Path = field(init=False)
     dest: Path = field(init=False)
     overwrite: bool = field(init=False, default=False)
     environment_options: dict[str, Any] = field(init=False)
     _subfiles: list["RenderFile"] = field(init=False)
-    _parent: Optional["RenderFile"] = field(default=None, init=False)
 
     __str_name__: str | None = "RenderFile"
     __str_attrs__ = ["name", "src", "dest"]
 
-    def __str__(self) -> str:
-        return f"{self.__str_name__}(" + ", ".join(f"{attr}={getattr(self, attr)}" for attr in self.__str_attrs__) + ")"
-
     def __init_subclass__(cls,
                           *,
-                          name: str,
+                          abstract: bool = False,
+                          name: str | None = None,
                           src: str | Path,
                           dest: str | Path,
                           overwrite: bool = False,
                           environment_options: dict[str, Any] | None = None,
                           subfiles: list["RenderFile"] | None = None,
                           **kwargs):
-        super().__init_subclass__(**kwargs)
+        super().__init_subclass__(abstract=abstract,
+                                  name=name,
+                                  **kwargs)
 
-        # name
-        cls.name = name
 
         # src
         if not isinstance(src, Path):
@@ -84,7 +81,7 @@ class RenderFile:
         self._subfiles = []
         self.add_subfile(*subfiles)
 
-        logger.debug(f"Initialized RenderFile: {self}")
+        super().__post_init__()
 
     def _get_environment(self,
                          dry_run: bool = False) -> Environment:
@@ -113,10 +110,6 @@ class RenderFile:
             return path
         environment.filters["ensure_path"] = ensure_path
         return environment
-
-    @property
-    def parent(self) -> Optional["RenderFile"]:
-        return self._parent
 
     @property
     def data(self) -> dict[str, Any]:
@@ -157,18 +150,9 @@ class RenderFile:
         return tuple(self._subfiles)
 
     def add_subfile(self, *subfiles: Union["RenderFile", type["RenderFile"]]) -> None:
-        for subfile in subfiles:
-            if not isinstance(subfile, RenderFile):
-                if issubclass(subfile, RenderFile):
-                    subfile = subfile()
-                else:
-                    raise TypeError(f"subfile must be an instance or subclass of RenderFile, got {type(subfile)}")
-
-            subfile._parent = self
-            if subfile in self.subfiles:
-                raise RuntimeError(f"'{subfile}' already added.")
-            self._subfiles.append(subfile)
-            _ = self.data  # validate data
+        children = self.create_children(*subfiles)
+        self._subfiles.extend(children)
+        _ = self.data  # validate data
 
     def test(self) -> dict[str, tuple[bool, str]]:
         result = {}

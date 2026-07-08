@@ -11,6 +11,7 @@ from pydantic import Field, BaseModel, field_validator, FilePath
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LOG_DIRECTORY = Path("var") / "log"
+RUN_DIRECTORY = Path("var") / "run"
 
 
 class Settings(BaseSettings):
@@ -26,7 +27,7 @@ class Settings(BaseSettings):
     var_directory: Path = Field(default=Path("var"),
                                 title="Var Directory",
                                 description="The var directory")
-    run_directory: Path = Field(default=Path("var/run"),
+    run_directory: Path = Field(default=RUN_DIRECTORY,
                                 title="Run Directory",
                                 description="The run directory")
     log_directory: Path = Field(default=LOG_DIRECTORY,

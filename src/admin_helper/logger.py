@@ -69,7 +69,6 @@ class TarRotatingFileHandler(RotatingFileHandler):
                         tar.add(log, arcname=log.name)
                         os.remove(log)
 
-
 logger = logging.getLogger(__package_name__)
 
 # set log level

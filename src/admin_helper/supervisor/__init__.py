@@ -11,8 +11,9 @@ from supervisor.supervisord import go as supervisord_go
 
 from admin_helper import __name__ as __package_name__
 from admin_helper.logger import logger as main_logger
-from admin_helper.render_file import RenderFile
+from admin_helper.types.render_file import RenderFile
 from admin_helper.settings import settings
+from admin_helper.supervisor.log_listener import SupervisorLogServer
 
 
 class SupervisorLoggerFilter(logging.Filter):
@@ -123,6 +124,9 @@ class _SupervisorService(RenderFile,
 
         # ensure pid file parent directory exists
         self.pid_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        log_server = SupervisorLogServer(_logger=self.logger)
+        log_server.thread.start()
 
         first = True
         while 1:
