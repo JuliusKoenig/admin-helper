@@ -1,6 +1,6 @@
 ServerRoot "{{ apache.server_root.absolute() | ensure_path | unix_path }}"
 PidFile "{{ apache.pid_file_path.parent.absolute() | ensure_path / apache.pid_file_path.name | unix_path }}"
-
+TypesConfig "{{ apache.mime_types_file_path.parent.absolute() | ensure_path / apache.mime_types_file_path.name | unix_path }}"
 Listen {{ apache.host }}:{{ apache.port }}
 
 ServerName localhost
