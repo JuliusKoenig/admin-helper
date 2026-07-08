@@ -1,10 +1,15 @@
 [program:{{ program.name }}]
 command={{ program.command }}
-directory={{ program.cwd }}
+directory={{ program.cwd.absolute() | ensure_path | unix_path }}
 user={{ program.user }}
 autostart={{ "true" if program.autostart else "false" }}
 autorestart={{ "true" if program.autorestart else "false" }}
+stdout_logfile={{ program.stdout_logfile_path.parent.absolute() | ensure_path / program.stdout_logfile_path.name | unix_path }}
+stdout_logfile_maxbytes={{ program.stdout_logfile_maxbytes }}
+stdout_logfile_backups={{ program.stdout_logfile_backups }}
 redirect_stderr=false
+tdout_events_enabled=true
+stderr_events_enabled=true
 stopsignal=TERM
 stopasgroup=true
 killasgroup=true

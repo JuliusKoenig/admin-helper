@@ -1,7 +1,6 @@
 import typer
 
 from admin_helper import __title__
-from admin_helper.logger import logger
 from admin_helper.settings import settings
 from admin_helper.console import console
 

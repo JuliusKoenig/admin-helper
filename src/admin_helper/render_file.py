@@ -9,6 +9,7 @@ from typing import Any, Union, Optional
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
+from admin_helper import __name__ as __module_name__
 from admin_helper.logger import logger
 from admin_helper.settings import settings
 
@@ -85,14 +86,32 @@ class RenderFile:
 
         logger.debug(f"Initialized RenderFile: {self}")
 
-    def _get_environment(self) -> Environment:
+    def _get_environment(self,
+                         dry_run: bool = False) -> Environment:
         logger.debug(f"Environment options: {self.environment_options}")
         environment_options = self.environment_options.copy()
         environment_options["loader"] = FileSystemLoader(self.src.parent)
         environment = Environment(**environment_options)
 
         # set filter
-        environment.filters["unix_path"] = lambda path: str(path).replace("\\", "/") if platform.system() == "Windows" else str(path)
+        def unix_path(path: str | Path) -> str:
+            if isinstance(path, Path):
+                path = str(path)
+            return path.replace("\\", "/") if platform.system() == "Windows" else path
+
+        environment.filters["unix_path"] = unix_path
+
+        def ensure_path(path: str | Path) -> Path:
+            if isinstance(path, str):
+                path = Path(path)
+            if not path.is_dir():
+                if dry_run:
+                    logger.debug(f"[DRY-RUN] Creating directory '{path}' ...")
+                else:
+                    logger.debug(f"Creating directory '{path}' ...")
+                    path.mkdir(parents=True, exist_ok=True)
+            return path
+        environment.filters["ensure_path"] = ensure_path
         return environment
 
     @property
@@ -113,6 +132,7 @@ class RenderFile:
             for __subfile in _subfile.subfiles:
                 add_subfile(__subfile)
 
+        add("__module_name__", __module_name__)
         add("settings", settings)
         add("environment", os.environ)
         add("user", getpass.getuser())
@@ -160,7 +180,7 @@ class RenderFile:
                 raise FileNotFoundError(f"{self.src} not found.")
 
             # get environment
-            environment = self._get_environment()
+            environment = self._get_environment(dry_run=True)
 
             # get template
             template = environment.get_template(self.src.name)
@@ -215,9 +235,9 @@ class RenderFile:
                 output_file.write(output)
 
             logger.debug(f"File {self} has been rendered.")
-            result[self.name] = (True, "✅ - Rendered successfully.")
+            result[self.name] = (True, "[green]Render passed.[/green]")
         except Exception as e:
-            result[self.name] = (False, f"❌ - Render failed: {e}")
+            result[self.name] = (False, f"[red]Render failed[/red]: {e}")
 
         # render subfiles
         for subfile in self.subfiles:

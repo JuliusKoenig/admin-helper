@@ -1,4 +1,5 @@
 from importlib.metadata import version
+from admin_helper.apache import ApacheService # required for correct import order
 
 __title__ = "Admin Helper"
 __description__ = "ToDo"

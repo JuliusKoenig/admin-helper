@@ -34,11 +34,29 @@ class SupervisorLogger(logging.Logger):
         self.addFilter(_filter)
 
         # implement required methods for supervisor logging interface
-        self.blather = lambda msg, *a, **kw: self._log(LevelsByName.DEBG, msg, a, **{"stacklevel": 2, **kw})
-        self.trace = lambda msg, *a, **kw: self._log(LevelsByName.DEBG, msg, a, **{"stacklevel": 2, **kw})
+        self.blather = lambda msg, *a, **kw: self._log(LevelsByName.DEBG, msg, a, **{"stacklevel": 3, **kw})
+        self.trace = lambda msg, *a, **kw: self._log(LevelsByName.DEBG, msg, a, **{"stacklevel": 3, **kw})
         self.close = lambda: None
 
         self.filter_msgs = []
+
+    def _log(self,
+             level,
+             msg: str,
+             args,
+             exc_info=None,
+             extra=None,
+             stack_info=False,
+             stacklevel=2,
+             dispatcher=None):
+        if extra is None:
+            extra = {}
+        if dispatcher is not None:
+            extra["dispatcher"] = dispatcher
+
+        # replace vars in msg
+        msg = msg % extra
+        super()._log(level, msg, args, exc_info, {"markup": False, **(extra or {})}, stack_info, stacklevel)
 
 
 logger = SupervisorLogger()
@@ -61,12 +79,17 @@ class SupervisorServerOptions(ServerOptions):
 class SupervisorProgram:
     name: str = field()
     command: str = field()
-    cwd: str = field(default_factory=Path.cwd)
+    stdout_logfile_path: Path = field(default=...)
+    stdout_logfile_maxbytes: int = field(default_factory=lambda: settings.supervisor.default_logfile_maxbytes)
+    stdout_logfile_backups: int = field(default_factory=lambda: settings.supervisor.default_logfile_backups)
+    cwd: Path = field(default_factory=Path.cwd)
     user: str = field(default_factory=getpass.getuser)
     autostart: bool = field(default=True)
     autorestart: bool = field(default=True)
 
-
+    def __post_init__(self):
+        if self.stdout_logfile_path is Ellipsis:
+            self.stdout_logfile_path = settings.supervisor.logfile_parent_directory / "programs" / f"{self.name}.log"
 
 
 @dataclass
@@ -84,10 +107,16 @@ class _SupervisorService(RenderFile,
     dashboard: bool = field(default=settings.supervisor.dashboard)
     dashboard_host: str = field(default=settings.supervisor.dashboard_host)
     dashboard_port: int = field(default=settings.supervisor.dashboard_port)
+    log_listener_script_path: Path = field(default=Path(__file__).parent / "log_listener.py")
 
     @property
     def programs(self) -> tuple[SupervisorProgram, ...]:
         return tuple(self._programs)
+
+    def add_program(self, program: SupervisorProgram) -> None:
+        if any(p.name == program.name for p in self._programs):
+            raise ValueError(f"Program with name '{program.name}' already exists.")
+        self._programs.append(program)
 
     def start(self) -> None:
         self.render()
@@ -119,10 +148,3 @@ class _SupervisorService(RenderFile,
 SupervisorService = _SupervisorService()
 
 __all__ = ["SupervisorService", "SupervisorProgram"]
-
-# class MyProgram(SupervisorProgram):
-#     ...
-#
-#
-# my_program = MyProgram(name="test",
-#                        command="sleep infinity")

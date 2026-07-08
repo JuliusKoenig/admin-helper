@@ -1,0 +1,33 @@
+ServerRoot "{{ apache.server_root.absolute() | ensure_path | unix_path }}"
+PidFile "{{ apache.pid_file_path.parent.absolute() | ensure_path / apache.pid_file_path.name | unix_path }}"
+
+Listen {{ apache.host }}:{{ apache.port }}
+
+ServerName localhost
+
+User {{ apache.user }}
+Group {{ apache.group }}
+
+DocumentRoot "{{ apache.document_root.absolute() | ensure_path | unix_path }}"
+
+ErrorLog /dev/stderr
+LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\"" combined
+CustomLog /dev/stdout combined
+
+LoadModule mpm_event_module {{ apache.module_directory_path }}/mod_mpm_event.so
+LoadModule auth_basic_module {{ apache.module_directory_path }}/mod_auth_basic.so
+LoadModule authn_file_module {{ apache.module_directory_path }}/mod_authn_file.so
+LoadModule authz_core_module {{ apache.module_directory_path }}/mod_authz_core.so
+LoadModule authz_user_module {{ apache.module_directory_path }}/mod_authz_user.so
+LoadModule dir_module {{ apache.module_directory_path }}/mod_dir.so
+LoadModule mime_module {{ apache.module_directory_path }}/mod_mime.so
+LoadModule log_config_module {{ apache.module_directory_path }}/mod_log_config.so
+LoadModule unixd_module {{ apache.module_directory_path }}/mod_unixd.so
+
+<Directory "{{ apache.document_root.absolute() | ensure_path | unix_path }}">
+Require all granted
+Options FollowSymLinks
+AllowOverride None
+</Directory>
+
+DirectoryIndex index.html index.php

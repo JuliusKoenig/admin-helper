@@ -80,7 +80,7 @@ null_handler = logging.NullHandler()
 logger.addHandler(null_handler)
 
 # add console handler
-if settings.logger.console:
+if not settings.logger.disabled and settings.logger.console:
     ch = RichHandler(
         console=console,
         show_time=settings.logger.console_rich_show_time,
@@ -95,7 +95,7 @@ if settings.logger.console:
     logger.addHandler(ch)
 
 # add file handler
-if settings.logger.file:
+if not settings.logger.disabled and settings.logger.file:
     # check if log_file_path is set
     if settings.logger.file_path is None:
         raise ValueError("Log file path not set")
