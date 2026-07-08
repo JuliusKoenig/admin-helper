@@ -126,6 +126,7 @@ class RenderFile(BaseObject, abstract=True):
                 add_subfile(__subfile)
 
         add("__module_name__", __module_name__)
+        add("system", platform.system())
         add("settings", settings)
         add("environment", os.environ)
         add("user", getpass.getuser())

@@ -203,8 +203,8 @@ class Settings(BaseSettings):
     class Apache(BaseModel):
         binary_path: FilePath = Field(default=Path("/usr/sbin/apache2") if platform.system() == "Linux" else Path("/usr/sbin/httpd"),
                                       title="Apache Binary Path",
-                                      description="Path to the Apache/httpd binary") if platform.system() == "Linux" else Field(default=Path("/usr/libexec/apache2"))
-        module_directory_path: Path = Field(default=Path("/usr/lib/apache2/modules"),
+                                      description="Path to the Apache/httpd binary")
+        module_directory_path: Path = Field(default=Path("/usr/lib/apache2/modules") if platform.system() == "Linux" else Path("/usr/libexec/apache2"),
                                             title="Apache Module Directory Path",
                                             description="Path to the Apache modules directory")
         host: IPv4Address = Field(default=IPv4Address("0.0.0.0"),
