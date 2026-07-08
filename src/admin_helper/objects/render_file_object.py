@@ -5,41 +5,43 @@ import os
 import platform
 
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Union, Optional
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from admin_helper import __name__ as __module_name__
-from admin_helper.types.base_object import BaseObject
-from admin_helper.logger import logger
 from admin_helper.settings import settings
+from admin_helper.objects.base_object import BaseObject
 
 
 @dataclass
-class RenderFile(BaseObject, abstract=True):
-    src: Path = field(init=False)
-    dest: Path = field(init=False)
-    overwrite: bool = field(init=False, default=False)
-    environment_options: dict[str, Any] = field(init=False)
-    _subfiles: list["RenderFile"] = field(init=False)
-
-    __str_name__: str | None = "RenderFile"
-    __str_attrs__ = ["name", "src", "dest"]
+class RenderFileObject(BaseObject,
+                       abstract=True):
+    src: Path = field(init=False,
+                      metadata={"frozen": True})
+    dest: Path = field(init=False,
+                       metadata={"frozen": True})
+    overwrite: bool = field(init=False,
+                            repr=False,
+                            metadata={"frozen": True})
+    environment_options: dict[str, Any] = field(init=False,
+                                                repr=False,
+                                                metadata={"frozen": True})
 
     def __init_subclass__(cls,
                           *,
                           abstract: bool = False,
                           name: str | None = None,
+                          parent: Union["BaseObject", Any, None] = None,
                           src: str | Path,
                           dest: str | Path,
                           overwrite: bool = False,
                           environment_options: dict[str, Any] | None = None,
-                          subfiles: list["RenderFile"] | None = None,
                           **kwargs):
         super().__init_subclass__(abstract=abstract,
                                   name=name,
+                                  parent=parent,
                                   **kwargs)
-
 
         # src
         if not isinstance(src, Path):
@@ -70,22 +72,9 @@ class RenderFile(BaseObject, abstract=True):
             }
         cls.environment_options = environment_options
 
-        # subfiles
-        if subfiles is None:
-            subfiles = []
-        cls._subfiles = subfiles
-
-    def __post_init__(self):
-        # add subfiles over interface
-        subfiles = self._subfiles
-        self._subfiles = []
-        self.add_subfile(*subfiles)
-
-        super().__post_init__()
-
     def _get_environment(self,
                          dry_run: bool = False) -> Environment:
-        logger.debug(f"Environment options: {self.environment_options}")
+        self.logger.debug(f"Environment options: {self.environment_options}")
         environment_options = self.environment_options.copy()
         environment_options["loader"] = FileSystemLoader(self.src.parent)
         environment = Environment(**environment_options)
@@ -103,13 +92,20 @@ class RenderFile(BaseObject, abstract=True):
                 path = Path(path)
             if not path.is_dir():
                 if dry_run:
-                    logger.debug(f"[DRY-RUN] Creating directory '{path}' ...")
+                    self.logger.debug(f"[DRY-RUN] Creating directory '{path}' ...")
                 else:
-                    logger.debug(f"Creating directory '{path}' ...")
+                    self.logger.debug(f"Creating directory '{path}' ...")
                     path.mkdir(parents=True, exist_ok=True)
             return path
+
         environment.filters["ensure_path"] = ensure_path
         return environment
+
+    @property
+    def parent_file(self) -> Optional["RenderFileObject"]:
+        if isinstance(self.parent, RenderFileObject):
+            return self.parent
+        return None
 
     @property
     def data(self) -> dict[str, Any]:
@@ -122,24 +118,27 @@ class RenderFile(BaseObject, abstract=True):
 
         def add_subfile(_subfile):
             add(_subfile.name, _subfile)
-            for __subfile in _subfile.subfiles:
+            for __subfile in _subfile.subfiles.values():
                 add_subfile(__subfile)
 
         add("__module_name__", __module_name__)
+        add("__object_name__", self.name)
+        add("__object__", self)
+        add(self.name, self)
         add("system", platform.system())
         add("settings", settings)
         add("environment", os.environ)
         add("user", getpass.getuser())
         add("group", os.getgid())
         add("pwd", Path.cwd())
-        add(self.name, self)
 
-        for subfile in self._subfiles:
+        for subfile in self.subfiles.values():
             add_subfile(subfile)
 
-        if self.parent is not None:
-            add(self.parent.name, self.parent)
-            for subfile in self.parent.subfiles:
+        parent_file = self.parent_file
+        if parent_file is not None:
+            add(parent_file.name, self.parent)
+            for subfile in parent_file.subfiles.values():
                 if subfile is self:
                     continue
                 add_subfile(subfile)
@@ -147,18 +146,20 @@ class RenderFile(BaseObject, abstract=True):
         return data
 
     @property
-    def subfiles(self) -> tuple["RenderFile", ...]:
-        return tuple(self._subfiles)
-
-    def add_subfile(self, *subfiles: Union["RenderFile", type["RenderFile"]]) -> None:
-        children = self.create_children(*subfiles)
-        self._subfiles.extend(children)
-        _ = self.data  # validate data
+    def subfiles(self) -> dict[str, "RenderFileObject"]:
+        subfiles = {}
+        for child_name, child in self.children.items():
+            if not isinstance(child, RenderFileObject):
+                continue
+            subfiles[child_name] = child
+        return subfiles
 
     def test(self) -> dict[str, tuple[bool, str]]:
         result = {}
+        for broadcast_result in self.broadcast_call("test"):
+            result.update(broadcast_result)
         try:
-            logger.debug(f"Testing file {self} ...")
+            self.logger.debug(f"Testing file {self} ...")
 
             # check if input file exist
             if not self.src.is_file():
@@ -171,26 +172,27 @@ class RenderFile(BaseObject, abstract=True):
             template = environment.get_template(self.src.name)
 
             # render template
-            logger.debug(f"Data: {self.data}")
+            self.logger.debug(f"Data: {self.data}")
             output = template.render(self.data)
 
-            logger.debug(f"Output: {output}")
+            self.logger.debug(f"Output: {output}")
 
-            logger.debug(f"File {self} has been tested successfully.")
+            self.logger.debug(f"File {self} has been tested successfully.")
             result[self.name] = (True, "[green]Test passed.[/green]")
         except Exception as e:
             result[self.name] = (False, f"[red]Test failed[/red]: {e}")
-
-        # test subfiles
-        for subfile in self.subfiles:
-            result.update(subfile.test())
+            self.logger.error(f"Testing file {self} failed: {e}")
+            if settings.debug:
+                raise e
 
         return result
 
     def render(self) -> dict[str, tuple[bool, str]]:
         result = {}
+        for broadcast_result in self.broadcast_call("render"):
+            result.update(broadcast_result)
         try:
-            logger.debug(f"Rendering file {self} ...")
+            self.logger.debug(f"Rendering file {self} ...")
 
             # check if input file exist
             if not self.src.is_file():
@@ -210,22 +212,21 @@ class RenderFile(BaseObject, abstract=True):
             template = environment.get_template(self.src.name)
 
             # render template
-            logger.debug(f"Data: {self.data}")
+            self.logger.debug(f"Data: {self.data}")
             output = template.render(self.data)
 
-            logger.debug(f"Output: {output}")
+            self.logger.debug(f"Output: {output}")
 
             # write output to file
             with self.dest.open(mode="w") as output_file:
                 output_file.write(output)
 
-            logger.debug(f"File {self} has been rendered.")
+            self.logger.debug(f"File {self} has been rendered.")
             result[self.name] = (True, "[green]Render passed.[/green]")
         except Exception as e:
             result[self.name] = (False, f"[red]Render failed[/red]: {e}")
-
-        # render subfiles
-        for subfile in self.subfiles:
-            result.update(subfile.render())
+            self.logger.error(f"Rendering file {self} failed: {e}")
+            if settings.debug:
+                raise e
 
         return result

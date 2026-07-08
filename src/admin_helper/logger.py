@@ -6,7 +6,7 @@ from pathlib import Path
 
 from rich.logging import RichHandler
 
-from admin_helper import __name__ as __package_name__
+from admin_helper import __name__ as __module_name__
 from admin_helper.console import console
 from admin_helper.settings import settings, Settings
 
@@ -64,12 +64,13 @@ class TarRotatingFileHandler(RotatingFileHandler):
                         os.remove(archive_filename)
                         break
 
+                # noinspection PyTypeChecker
                 with tarfile.open(archive_filename, 'w:gz') as tar:
                     for log in backup_logs:
                         tar.add(log, arcname=log.name)
                         os.remove(log)
 
-logger = logging.getLogger(__package_name__)
+logger = logging.getLogger(__module_name__)
 
 # set log level
 logger.setLevel(settings.logger.level.value)
