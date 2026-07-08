@@ -21,8 +21,8 @@ LoadModule authz_core_module {{ apache.module_directory_path }}/mod_authz_core.s
 LoadModule authz_user_module {{ apache.module_directory_path }}/mod_authz_user.so
 LoadModule dir_module {{ apache.module_directory_path }}/mod_dir.so
 LoadModule mime_module {{ apache.module_directory_path }}/mod_mime.so
-LoadModule log_config_module {{ apache.module_directory_path }}/mod_log_config.so
-LoadModule unixd_module {{ apache.module_directory_path }}/mod_unixd.so
+{#LoadModule log_config_module {{ apache.module_directory_path }}/mod_log_config.so#}
+{#LoadModule unixd_module {{ apache.module_directory_path }}/mod_unixd.so#}
 
 <Directory "{{ apache.document_root.absolute() | ensure_path | unix_path }}">
 Require all granted

@@ -1,5 +1,6 @@
 import encodings
 import logging
+import platform
 import sys
 from enum import Enum
 from ipaddress import IPv4Address
@@ -199,9 +200,9 @@ class Settings(BaseSettings):
                                    description="The supervisor settings")
 
     class Apache(BaseModel):
-        binary_path: FilePath = Field(default=Path("/usr/sbin/httpd"),
+        binary_path: FilePath = Field(default=Path("/usr/sbin/apache2") if platform.system() == "Linux" else Path("/usr/sbin/httpd"),
                                       title="Apache Binary Path",
-                                      description="Path to the Apache/httpd binary")
+                                      description="Path to the Apache/httpd binary") if platform.system() == "Linux" else Field(default=Path("/usr/libexec/apache2"))
         module_directory_path: Path = Field(default=Path("/usr/lib/apache2/modules"),
                                             title="Apache Module Directory Path",
                                             description="Path to the Apache modules directory")
@@ -214,10 +215,10 @@ class Settings(BaseSettings):
                           title="Apache Port",
                           description="The port for the Apache server")
 
-        user: str = Field(default="www-data",
+        user: str = Field(default="www-data" if platform.system() == "Linux" else "_www",
                           title="Apache User",
                           description="The user for the Apache server")
-        group: str = Field(default="www-data",
+        group: str = Field(default="www-data" if platform.system() == "Linux" else "_www",
                            title="Apache Group",
                            description="The group for the Apache server")
 
