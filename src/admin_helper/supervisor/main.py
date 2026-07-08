@@ -14,7 +14,7 @@ from admin_helper.settings import settings
 
 
 @dataclass
-class _Supervisor(RenderFileObject,
+class Supervisor(RenderFileObject,
                   name="supervisor",
                   parent=AdminHelper,
                   src="supervisord.conf.j2",
@@ -87,4 +87,4 @@ class _Supervisor(RenderFileObject,
             self.pid_file_path.unlink()
 
 
-Supervisor = _Supervisor()
+Supervisor = Supervisor()

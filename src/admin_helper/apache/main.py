@@ -9,7 +9,7 @@ from admin_helper.settings import settings
 
 
 @dataclass
-class _Apache(SupervisorProgram, RenderFileObject,
+class Apache(SupervisorProgram, RenderFileObject,
               name="apache",
               parent=Supervisor,
               src="apache.conf.j2",
@@ -49,5 +49,5 @@ class _Apache(SupervisorProgram, RenderFileObject,
                        metadata={"frozen": True})
 
 
-Apache = _Apache()
+Apache = Apache()
 

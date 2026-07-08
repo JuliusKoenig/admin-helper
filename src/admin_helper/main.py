@@ -4,7 +4,7 @@ from admin_helper.objects import BaseObject
 
 
 @dataclass
-class _AdminHelper(BaseObject):
+class AdminHelper(BaseObject):
     def start(self) -> None:
         self.broadcast_call("start")
 
@@ -21,4 +21,4 @@ class _AdminHelper(BaseObject):
         return result
 
 
-AdminHelper = _AdminHelper()
+AdminHelper = AdminHelper()
