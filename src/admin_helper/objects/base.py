@@ -38,13 +38,12 @@ class BaseObject(ABC):
                           abstract: bool = False,
                           name: str | None = None,
                           parent: Union["BaseObject", Any, None] = None,
-                          logger: type[logging.Logger] | None = None,
-                          **kwargs):
+                          logger: type[logging.Logger] | None = None):
         # abstract
         if abstract:
             for key, value in {"name": name,
                                "parent": parent,
-                               **kwargs}.items():
+                               "logger": logger}.items():
                 if value is None:
                     continue
                 raise RuntimeError(f"{cls.__name__} is abstract and cannot have '{key}' defined.")
