@@ -11,6 +11,9 @@ T = TypeVar("T", bound="BaseObject")
 
 BROADCAST_METHODS: list[str] = []
 
+def is_abstract(cls: Union["BaseObject", type["BaseObject"], Any]) -> bool:
+    return getattr(cls, "_abstract", False)
+
 
 @dataclass
 class BaseObject(ABC):
@@ -32,6 +35,9 @@ class BaseObject(ABC):
     _children: list[Union["BaseObject", Any]] = field(default_factory=list,
                                                       init=False,
                                                       repr=False)
+    _abstract: bool = field(init=False,
+                            repr=False,
+                            metadata={"frozen": True})
 
     def __init_subclass__(cls,
                           *,
@@ -47,8 +53,10 @@ class BaseObject(ABC):
                 if value is None:
                     continue
                 raise RuntimeError(f"{cls.__name__} is abstract and cannot have '{key}' defined.")
-            cls.__abstract__ = True
+            cls._abstract = True
             return
+        else:
+            cls._abstract = False
 
         # name
         if name is None:
@@ -67,6 +75,10 @@ class BaseObject(ABC):
         cls.logger: logging.Logger = logger(logger_name)
 
     def __post_init__(self):
+        # abstract
+        if is_abstract(self):
+            raise AttributeError(f"Object '{self}' is abstract and cannot be instantiated.")
+
         # parent
         if self.parent:
             self.parent.add_child(self)

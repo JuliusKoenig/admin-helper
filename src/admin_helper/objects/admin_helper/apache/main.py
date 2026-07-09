@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from admin_helper.objects.admin_helper.apache.route import ApacheRoute, StaticFilesApacheRoute
 from admin_helper.settings import AdminHelperSettings
 from admin_helper.objects.admin_helper.supervisor.main import Supervisor
 from admin_helper.objects.admin_helper.supervisor.program import SupervisorProgram
@@ -47,5 +48,26 @@ class Apache(SupervisorProgram, RenderFileObject,
                        repr=False,
                        metadata={"frozen": True})
 
+    @property
+    def routes(self) -> dict[str, ApacheRoute]:
+        routes = {}
+        for child_name, child in self.children.items():
+            if isinstance(child, ApacheRoute):
+                routes[child_name] = child
+        return routes
+
 
 Apache: Apache = Apache()
+
+
+@dataclass
+class TestStaticRoute(StaticFilesApacheRoute,
+                      name="apache_test_static",
+                      parent=Apache,
+                      path="/test",
+                      document_root=AdminHelperSettings.var_directory / "www" / "test",
+                      auth_required=False):
+    ...
+
+
+TestStaticRoute: TestStaticRoute = TestStaticRoute()

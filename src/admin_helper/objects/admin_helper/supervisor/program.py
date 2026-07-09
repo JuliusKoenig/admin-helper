@@ -3,14 +3,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from admin_helper.settings import AdminHelperSettings
-from admin_helper.objects.base import BaseObject
+from admin_helper.objects.base import BaseObject, is_abstract
 
 
 @dataclass
 class SupervisorProgram(BaseObject,
                         abstract=True):
     command: str = field(init=False,
-                         repr=AdminHelperSettings.debug,
+                         repr=False,
                          metadata={"frozen": True})
     stdout_logfile_maxbytes: int = field(init=False,
                                          repr=False,
@@ -33,7 +33,7 @@ class SupervisorProgram(BaseObject,
 
     def __init_subclass__(cls,
                           *,
-                          command: str,
+                          command: str | None = None,
                           stdout_logfile_maxbytes: int | None = None,
                           stdout_logfile_backups: int | None = None,
                           cwd: Path | None = None,
@@ -43,7 +43,13 @@ class SupervisorProgram(BaseObject,
                           **kwargs):
         super().__init_subclass__(**kwargs)
 
+        # abstract
+        if is_abstract(cls):
+            return
+
         # command
+        if command is None:
+            raise  AttributeError(f"Attribute 'command' of '{cls.__name__}' is required.")
         cls.command = command
 
         # stdout_logfile_maxbytes

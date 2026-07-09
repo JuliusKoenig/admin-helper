@@ -20,14 +20,10 @@ LoadModule authn_file_module {{ apache.module_directory_path }}/mod_authn_file.s
 LoadModule authz_core_module {{ apache.module_directory_path }}/mod_authz_core.so
 LoadModule authz_user_module {{ apache.module_directory_path }}/mod_authz_user.so
 LoadModule dir_module {{ apache.module_directory_path }}/mod_dir.so
-LoadModule mime_module {{ apache.module_directory_path }}/mod_mime.so{% if system == "Darwin" %}
+LoadModule mime_module {{ apache.module_directory_path }}/mod_mime.so
+LoadModule alias_module {{ apache.module_directory_path }}/mod_alias.so{% if system == "Darwin" %}
 LoadModule log_config_module {{ apache.module_directory_path }}/mod_log_config.so
-LoadModule unixd_module {{ apache.module_directory_path }}/mod_unixd.so{% endif %}
+LoadModule unixd_module {{ apache.module_directory_path }}/mod_unixd.so{% endif %}{% for route in apache.routes.values() %}
 
-<Directory "{{ apache.document_root.absolute() | ensure_path | unix_path }}">
-Require all granted
-Options FollowSymLinks
-AllowOverride None
-</Directory>
-
-DirectoryIndex index.html index.php
+# Route: {{ route }}
+{% include "route.conf.j2" %}{% endfor %}

@@ -11,7 +11,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from admin_helper import __name__ as __module_name__
 from admin_helper.settings import AdminHelperSettings
-from admin_helper.objects.base import BaseObject
+from admin_helper.objects.base import BaseObject, is_abstract
 
 RenderResult = list[tuple[bool, "RenderFileObject", str]]
 TestResult = list[tuple[bool, "RenderFileObject", str]]
@@ -21,10 +21,10 @@ TestResult = list[tuple[bool, "RenderFileObject", str]]
 class RenderFileObject(BaseObject,
                        abstract=True):
     src: Path = field(init=False,
-                      repr=AdminHelperSettings.debug,
+                      repr=False,
                       metadata={"frozen": True})
     dest: Path = field(init=False,
-                       repr=AdminHelperSettings.debug,
+                       repr=False,
                        metadata={"frozen": True})
     overwrite: bool = field(init=False,
                             repr=False,
@@ -35,14 +35,20 @@ class RenderFileObject(BaseObject,
 
     def __init_subclass__(cls,
                           *,
-                          src: str | Path,
-                          dest: str | Path,
+                          src: str | Path | None = None,
+                          dest: str | Path | None = None,
                           overwrite: bool = False,
                           environment_options: dict[str, Any] | None = None,
                           **kwargs):
         super().__init_subclass__(**kwargs)
 
+        # abstract
+        if is_abstract(cls):
+            return
+
         # src
+        if src is None:
+            raise AttributeError(f"Attribute 'src' of '{cls.__name__}' is required.")
         if not isinstance(src, Path):
             src = Path(src)
         if not src.is_file():
@@ -57,6 +63,8 @@ class RenderFileObject(BaseObject,
         cls.src = src
 
         # dest
+        if dest is None:
+            raise AttributeError(f"Attribute 'dest' of '{cls.__name__}' is required.")
         if not isinstance(dest, Path):
             dest = Path(dest)
         cls.dest = dest

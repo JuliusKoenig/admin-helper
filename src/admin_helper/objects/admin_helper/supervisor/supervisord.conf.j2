@@ -21,7 +21,7 @@ stderr_logfile=/dev/stderr
 stderr_logfile_maxbytes=0{% if supervisor.dashboard %}
 
 [inet_http_server]
-port={{ supervisor.dashboard_host }}:{{ supervisor.dashboard_port }}{% endif %}
-{% for program in supervisor.programs.values() %}
-{% include "program.conf.j2" %}
-{% endfor %}
+port={{ supervisor.dashboard_host }}:{{ supervisor.dashboard_port }}{% endif %}{% for program in supervisor.programs.values() %}
+
+# Program: {{ program }}
+{% include "program.conf.j2" %}{% endfor %}

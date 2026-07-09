@@ -3,6 +3,7 @@ import time
 from abc import abstractmethod
 from dataclasses import dataclass, field
 
+from admin_helper.objects.base import is_abstract
 from admin_helper.objects.starter import StartObject
 
 
@@ -29,6 +30,10 @@ class ThreadObject(StartObject):
                           loop_delay: int = 1,
                           **kwargs):
         super().__init_subclass__(**kwargs)
+
+        # abstract
+        if is_abstract(cls):
+            return
 
         # loop
         cls.loop = loop
