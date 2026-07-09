@@ -88,4 +88,4 @@ class Supervisor(RenderFileObject,
             self.pid_file_path.unlink()
 
 
-Supervisor = Supervisor()
+Supervisor: Supervisor = Supervisor()

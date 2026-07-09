@@ -10,9 +10,9 @@ from admin_helper.objects.thread import ThreadObject
 
 
 @dataclass
-class _SupervisorLogServer(ThreadObject,
-                           name="supervisor_log_server",
-                           parent=Supervisor):
+class SupervisorLogServer(ThreadObject,
+                          name="supervisor_log_server",
+                          parent=Supervisor):
     socket_file_path: Path = field(default=SOCKET_FILE_PATH)
 
     __str_name__: str | None = "SupervisorLogServer"
@@ -61,4 +61,4 @@ class _SupervisorLogServer(ThreadObject,
                     self.logger.info(message, extra=extra)
 
 
-SupervisorLogServer = _SupervisorLogServer()
+SupervisorLogServer: SupervisorLogServer = SupervisorLogServer()

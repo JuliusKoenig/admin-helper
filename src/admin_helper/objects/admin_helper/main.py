@@ -16,4 +16,4 @@ class AdminHelper(StartObject, RenderFileObject,
     ...
 
 
-AdminHelper = AdminHelper()
+AdminHelper: AdminHelper = AdminHelper()

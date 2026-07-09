@@ -49,4 +49,4 @@ class Apache(SupervisorProgram, RenderFileObject,
                        metadata={"frozen": True})
 
 
-Apache = Apache()
+Apache: Apache = Apache()

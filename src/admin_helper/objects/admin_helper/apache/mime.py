@@ -6,13 +6,13 @@ from admin_helper.objects.render_file import RenderFileObject
 
 
 @dataclass
-class _ApacheMimeTypeFile(RenderFileObject,
-                          name="apache_mime_file",
-                          parent=Apache,
-                          src="mime.types.j2",
-                          dest=settings.config_directory / "apache" / "mime.types",
-                          overwrite=True):
+class ApacheMimeTypeFile(RenderFileObject,
+                         name="apache_mime_file",
+                         parent=Apache,
+                         src="mime.types.j2",
+                         dest=settings.config_directory / "apache" / "mime.types",
+                         overwrite=True):
     ...
 
 
-ApacheMimeTypeFile = _ApacheMimeTypeFile()
+ApacheMimeTypeFile: ApacheMimeTypeFile = ApacheMimeTypeFile()
