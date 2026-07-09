@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="TemplateDataLanguageMappings">
-    <file url="file://$PROJECT_DIR$/src/admin_helper/apache/apache.conf.j2" dialect="TEXT" />
+    <file url="file://$PROJECT_DIR$/src/admin_helper/objects/admin_helper/apache/apache.conf.j2" dialect="TEXT" />
   </component>
 </project>

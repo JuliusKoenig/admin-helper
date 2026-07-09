@@ -4,9 +4,7 @@ from abc import ABC
 from dataclasses import dataclass, field, fields
 from typing import TypeVar, Union, Any
 
-from admin_helper import __name__ as __module_name__
 from admin_helper.exceptions import BroadcastException
-from admin_helper.logger import logger
 from admin_helper.settings import settings
 
 T = TypeVar("T", bound="BaseObject")
@@ -40,6 +38,7 @@ class BaseObject(ABC):
                           abstract: bool = False,
                           name: str | None = None,
                           parent: Union["BaseObject", Any, None] = None,
+                          logger: type[logging.Logger] | None = None,
                           **kwargs):
         # abstract
         if abstract:
@@ -60,14 +59,22 @@ class BaseObject(ABC):
         # parent
         cls.parent = parent
 
+        # logger
+        logger_name = cls.name
+        if cls.parent is not None and cls.parent.logger is not None:
+            logger_name = f"{cls.parent.logger.name}.{cls.name}"
+        if logger is None:
+            logger = logging.Logger
+        cls.logger: logging.Logger = logger(logger_name)
+
     def __post_init__(self):
         # parent
         if self.parent:
             self.parent.add_child(self)
 
         # logger
-        self.logger = logging.Logger(f"{__module_name__}.{self.name}")
-        self.logger.parent = logger
+        if self.parent:
+            self.logger.parent = self.parent.logger
 
         # finalize
         self._init = True

@@ -1,7 +1,5 @@
 from importlib.metadata import version
-from admin_helper.main import AdminHelper
-from admin_helper.supervisor import *
-from admin_helper.apache import *
+from admin_helper.objects import *
 
 __title__ = "Admin Helper"
 __description__ = "ToDo"

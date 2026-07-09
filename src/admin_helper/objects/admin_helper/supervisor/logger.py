@@ -3,9 +3,6 @@ from logging import LogRecord
 
 from supervisor.loggers import LevelsByName
 
-from admin_helper import __name__ as __package_name__
-from admin_helper.logger import logger as main_logger
-
 
 class SupervisorLogger(logging.Logger):
     class SupervisorLoggerFilter(logging.Filter):
@@ -17,9 +14,8 @@ class SupervisorLogger(logging.Logger):
                 return False
             return True
 
-    def __init__(self):
-        super().__init__(name=f"{__package_name__}.supervisor.main")
-        self.parent = main_logger
+    def __init__(self, name: str):
+        super().__init__(name=name)
         _filter = self.SupervisorLoggerFilter()
         _filter.logger = self
         self.addFilter(_filter)
@@ -46,8 +42,10 @@ class SupervisorLogger(logging.Logger):
             extra["dispatcher"] = dispatcher
 
         # replace vars in msg
-        msg = msg % extra
+        try:
+            msg = msg % extra
+        except KeyError:
+            pass
         super()._log(level, msg, args, exc_info, {"markup": False, **(extra or {})}, stack_info, stacklevel)
 
 
-logger = SupervisorLogger()

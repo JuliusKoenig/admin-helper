@@ -4,9 +4,9 @@ from contextlib import contextmanager
 from dataclasses import field, dataclass
 from pathlib import Path
 
-from admin_helper.supervisor.main import Supervisor
-from admin_helper.supervisor.log_listener import SOCKET_FILE_PATH
-from admin_helper.objects import ThreadObject
+from admin_helper.objects.admin_helper.supervisor.main import Supervisor
+from admin_helper.objects.admin_helper.supervisor.log_listener import SOCKET_FILE_PATH
+from admin_helper.objects.thread import ThreadObject
 
 
 @dataclass
@@ -59,5 +59,6 @@ class _SupervisorLogServer(ThreadObject,
                         "channel_name": channel_name,
                     }
                     self.logger.info(message, extra=extra)
+
 
 SupervisorLogServer = _SupervisorLogServer()

@@ -3,8 +3,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Union, Any
 
-from admin_helper.objects import BaseObject
 from admin_helper.settings import settings
+from admin_helper.objects.base import BaseObject
 
 
 @dataclass
@@ -54,22 +54,22 @@ class SupervisorProgram(BaseObject,
 
         # stdout_logfile_maxbytes
         if stdout_logfile_maxbytes is None:
-            stdout_logfile_maxbytes= settings.supervisor.default_logfile_maxbytes
+            stdout_logfile_maxbytes = settings.supervisor.default_logfile_maxbytes
         cls.stdout_logfile_maxbytes = stdout_logfile_maxbytes
 
         # stdout_logfile_backups
         if stdout_logfile_backups is None:
-            stdout_logfile_backups= settings.supervisor.default_logfile_backups
+            stdout_logfile_backups = settings.supervisor.default_logfile_backups
         cls.stdout_logfile_backups = stdout_logfile_backups
 
         # cwd
         if cwd is None:
-            cwd= Path.cwd()
+            cwd = Path.cwd()
         cls.cwd = cwd
 
         # user
         if user is None:
-            user= getpass.getuser()
+            user = getpass.getuser()
         cls.user = user
 
         # autostart
@@ -77,7 +77,6 @@ class SupervisorProgram(BaseObject,
 
         # autorestart
         cls.autorestart = autorestart
-
 
     @property
     def stdout_logfile_path(self):

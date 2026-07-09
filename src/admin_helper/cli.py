@@ -15,7 +15,7 @@ def settings_command() -> None:
 
 @cli_app.command(name="start", help=f"Start the {__title__} Supervisor")
 def supervisor_start_command() -> None:
-    from admin_helper.main import AdminHelper
+    from admin_helper import AdminHelper
 
     console.rule(f"{__title__} Supervisor", style="bold blue")
 
@@ -24,7 +24,7 @@ def supervisor_start_command() -> None:
 
 @cli_app.command(name="test", help=f"Check the {__title__} configuration")
 def test_command() -> None:
-    from admin_helper.main import AdminHelper
+    from admin_helper import AdminHelper
 
     console.rule(f"{__title__} Configuration Test", style="bold blue")
     result = AdminHelper.test()
@@ -40,7 +40,7 @@ def test_command() -> None:
 
 @cli_app.command(name="render", help=f"Render the {__title__} configuration")
 def render_command() -> None:
-    from admin_helper.main import AdminHelper
+    from admin_helper import AdminHelper
 
     console.rule(f"{__title__} Rendering", style="bold blue")
     result = AdminHelper.render()

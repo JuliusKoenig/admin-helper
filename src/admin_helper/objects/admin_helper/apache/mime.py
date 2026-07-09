@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 
-from admin_helper.apache.main import Apache
-from admin_helper.objects import RenderFileObject
 from admin_helper.settings import settings
+from admin_helper.objects.admin_helper.apache.main import Apache
+from admin_helper.objects.render_file import RenderFileObject
 
 
 @dataclass

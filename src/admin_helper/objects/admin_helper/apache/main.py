@@ -2,24 +2,24 @@ import platform
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from admin_helper.supervisor.main import Supervisor
-from admin_helper.supervisor.program import SupervisorProgram
-from admin_helper.objects import RenderFileObject
 from admin_helper.settings import settings
+from admin_helper.objects.admin_helper.supervisor.main import Supervisor
+from admin_helper.objects.admin_helper.supervisor.program import SupervisorProgram
+from admin_helper.objects.render_file import RenderFileObject
 
 
 @dataclass
 class Apache(SupervisorProgram, RenderFileObject,
-              name="apache",
-              parent=Supervisor,
-              src="apache.conf.j2",
-              dest=settings.config_directory / "apache" / "apache.conf",
-              overwrite=True,
-              command=f"{settings.apache.binary_path.absolute()} -DFOREGROUND -f {settings.config_directory.absolute() / 'apache' / 'apache.conf'}",
-              cwd=settings.var_directory / "lib" / "apache",
-              user=settings.apache.user if platform.system() == "Linux" else None,
-              autostart=True,
-              autorestart=True):
+             name="apache",
+             parent=Supervisor,
+             src="apache.conf.j2",
+             dest=settings.config_directory / "apache" / "apache.conf",
+             overwrite=True,
+             command=f"{settings.apache.binary_path.absolute()} -DFOREGROUND -f {settings.config_directory.absolute() / 'apache' / 'apache.conf'}",
+             cwd=settings.var_directory / "lib" / "apache",
+             user=settings.apache.user if platform.system() == "Linux" else None,
+             autostart=True,
+             autorestart=True):
     binary_path: Path = field(default=settings.apache.binary_path,
                               repr=False,
                               metadata={"frozen": True})
@@ -50,4 +50,3 @@ class Apache(SupervisorProgram, RenderFileObject,
 
 
 Apache = Apache()
-

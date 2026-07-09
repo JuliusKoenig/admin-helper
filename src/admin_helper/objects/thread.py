@@ -4,11 +4,11 @@ from abc import abstractmethod
 from dataclasses import dataclass, field
 from typing import Union, Any
 
-from admin_helper.objects.base_object import BaseObject
+from admin_helper.objects.starter import StartObject
 
 
 @dataclass
-class ThreadObject(BaseObject):
+class ThreadObject(StartObject):
     lock: threading.Lock = field(default_factory=threading.Lock,
                                  init=False,
                                  repr=False,
@@ -28,7 +28,7 @@ class ThreadObject(BaseObject):
                           *,
                           abstract: bool = False,
                           name: str | None = None,
-                          parent: Union["BaseObject", Any, None] = None,
+                          parent: Union["StartObject", Any, None] = None,
                           loop: bool = False,
                           loop_delay: int = 1,
                           **kwargs):
@@ -70,5 +70,5 @@ class ThreadObject(BaseObject):
         ...
 
     def start(self) -> None:
-        self.broadcast_call("start")
+        super().start()
         self.thread.start()

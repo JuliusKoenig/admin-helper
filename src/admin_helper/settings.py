@@ -10,14 +10,14 @@ from typing import IO, Any
 from pydantic import Field, BaseModel, field_validator, FilePath
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-LOG_DIRECTORY = Path("var") / "log"
-RUN_DIRECTORY = Path("var") / "run"
-
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ADMIN_HELPER_",
                                       env_nested_delimiter="__")
     debug: bool = Field(default=False, title="Debug", description="Whether to run in debug mode")
+    base_directory: Path = Field(default_factory=Path.cwd,
+                                 title="Base Directory",
+                                 description="The base directory")
     binary_directory: Path = Field(default=Path("usr/local/bin"),
                                    title="Binary Directory",
                                    description="The directory where binaries are stored")
@@ -27,10 +27,10 @@ class Settings(BaseSettings):
     var_directory: Path = Field(default=Path("var"),
                                 title="Var Directory",
                                 description="The var directory")
-    run_directory: Path = Field(default=RUN_DIRECTORY,
+    run_directory: Path = Field(default=Path("run"),
                                 title="Run Directory",
                                 description="The run directory")
-    log_directory: Path = Field(default=LOG_DIRECTORY,
+    log_directory: Path = Field(default=Path("log"),
                                 title="Log Directory",
                                 description="The log directory")
     temp_directory: Path = Field(default=Path("tmp"),
@@ -108,7 +108,7 @@ class Settings(BaseSettings):
         file: bool = Field(default=False,
                            title="File Logging",
                            description="Whether to log to a file")
-        file_path: Path | None = Field(default=LOG_DIRECTORY / "admin-helper" / "admin-helper.log",
+        file_path: Path | None = Field(default=Path("admin-helper/admin-helper.log"),
                                        title="Log File Path",
                                        description="The path of the log file")
         file_level: LogLevels | None = Field(default=None,
@@ -186,7 +186,7 @@ class Settings(BaseSettings):
                                     le=65535,
                                     title="Supervisor dashboard port",
                                     description="The port of the Supervisor dashboard")
-        logfile_parent_directory: Path = Field(default=LOG_DIRECTORY / "supervisord",
+        logfile_parent_directory: Path = Field(default=Path("supervisord"),
                                                title="Supervisor Logfile Parent Directory",
                                                description="The parent directory for Supervisor log files")
         default_logfile_maxbytes: int = Field(default=10 * 1024 * 1024,
@@ -228,10 +228,31 @@ class Settings(BaseSettings):
                            description="The Apache settings")
 
     def model_post_init(self, context: Any, /):
+        # set logger levels to debug if debug is enabled
         if self.debug:
             self.logger.level = self.Logger.LogLevels.DEBUG
             self.logger.console_level = self.Logger.LogLevels.DEBUG
             self.logger.file_level = self.Logger.LogLevels.DEBUG
+
+        # propagate paths
+        if not self.binary_directory.is_absolute():
+            self.binary_directory = self.base_directory / self.binary_directory
+        if not self.config_directory.is_absolute():
+            self.config_directory = self.base_directory / self.config_directory
+        if not self.var_directory.is_absolute():
+            self.var_directory = self.base_directory / self.var_directory
+        if not self.run_directory.is_absolute():
+            self.run_directory = self.var_directory / self.run_directory
+        if not self.log_directory.is_absolute():
+            self.log_directory = self.var_directory / self.log_directory
+        if self.logger.file_path is not None:
+            if not self.logger.file_path.is_absolute():
+                self.logger.file_path = self.log_directory / self.logger.file_path
+        if not self.supervisor.logfile_parent_directory.is_absolute():
+            self.supervisor.logfile_parent_directory = self.log_directory / self.supervisor.logfile_parent_directory
+        if not self.temp_directory.is_absolute():
+            self.temp_directory = self.base_directory / self.temp_directory
+
         super().model_post_init(context)
 
 

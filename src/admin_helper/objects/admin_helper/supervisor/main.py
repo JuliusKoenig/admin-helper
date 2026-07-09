@@ -6,25 +6,26 @@ from supervisor.options import ServerOptions
 from supervisor.states import SupervisorStates
 from supervisor.supervisord import go as supervisord_go
 
-from admin_helper.main import AdminHelper
-from admin_helper.supervisor.logger import logger
-from admin_helper.supervisor.program import SupervisorProgram
-from admin_helper.objects import RenderFileObject
 from admin_helper.settings import settings
+from admin_helper.objects.admin_helper.main import AdminHelper
+from admin_helper.objects.admin_helper.supervisor.logger import SupervisorLogger
+from admin_helper.objects.admin_helper.supervisor.program import SupervisorProgram
+from admin_helper.objects.render_file import RenderFileObject
 
 
 @dataclass
 class Supervisor(RenderFileObject,
-                  name="supervisor",
-                  parent=AdminHelper,
-                  src="supervisord.conf.j2",
-                  dest=settings.config_directory / "supervisord.conf",
-                  overwrite=True):
+                 name="supervisor",
+                 parent=AdminHelper,
+                 logger=SupervisorLogger,
+                 src="supervisord.conf.j2",
+                 dest=settings.config_directory / "supervisord.conf",
+                 overwrite=True):
     class SupervisorServerOptions(ServerOptions):
-        logger: logging.Logger
+        logger: SupervisorLogger | logging.Logger
 
         def make_logger(self):
-            self.logger = logger
+            self.logger = Supervisor.logger
             for msg in self.parse_criticals:
                 self.logger.critical(msg)
             for msg in self.parse_warnings:
@@ -74,7 +75,7 @@ class Supervisor(RenderFileObject,
                              "-n"], doc=__doc__)
             options.first = first
             options.test = False
-            logger.debug(f"Starting supervisor ...")
+            self.logger.debug(f"Starting supervisor ...")
             supervisord_go(options)
             options.close_httpservers()
             options.close_logger()

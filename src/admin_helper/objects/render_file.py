@@ -11,7 +11,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from admin_helper import __name__ as __module_name__
 from admin_helper.settings import settings
-from admin_helper.objects.base_object import BaseObject
+from admin_helper.objects.base import BaseObject
 
 
 @dataclass
