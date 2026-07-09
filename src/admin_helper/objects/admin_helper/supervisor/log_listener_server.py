@@ -12,7 +12,8 @@ from admin_helper.objects.thread import ThreadObject
 @dataclass
 class SupervisorLogServer(ThreadObject,
                           name="supervisor_log_server",
-                          parent=Supervisor):
+                          parent=Supervisor,
+                          loop=True):
     socket_file_path: Path = field(default=SOCKET_FILE_PATH)
 
     def __post_init__(self):
