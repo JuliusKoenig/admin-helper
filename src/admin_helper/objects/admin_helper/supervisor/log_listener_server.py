@@ -12,8 +12,7 @@ from admin_helper.objects.thread import ThreadObject
 @dataclass
 class SupervisorLogServer(ThreadObject,
                           name="supervisor_log_server",
-                          parent=Supervisor,
-                          loop=True):
+                          parent=Supervisor):
     socket_file_path: Path = field(default=SOCKET_FILE_PATH)
 
     def __post_init__(self):
@@ -41,23 +40,24 @@ class SupervisorLogServer(ThreadObject,
 
     def run(self):
         with self.socket() as sock:
-            conn, _ = sock.accept()
-            with conn:
-                file = conn.makefile("r")
-                for line in file:
-                    try:
-                        event = json.loads(line)
-                    except json.JSONDecodeError:
-                        self.logger.warning("Invalid JSON: %r", line)
-                        continue
-                    process_name = event["process"]
-                    channel_name = event["channel"]
-                    message = event["message"]
-                    extra = {
-                        "process_name": process_name,
-                        "channel_name": channel_name,
-                    }
-                    self.logger.info(message, extra=extra)
+            while True:
+                conn, _ = sock.accept()
+                with conn:
+                    file = conn.makefile("r")
+                    for line in file:
+                        try:
+                            event = json.loads(line)
+                        except json.JSONDecodeError:
+                            self.logger.warning("Invalid JSON: %r", line)
+                            continue
+                        process_name = event["process"]
+                        channel_name = event["channel"]
+                        message = event["message"]
+                        extra = {
+                            "process_name": process_name,
+                            "channel_name": channel_name,
+                        }
+                        self.logger.info(message, extra=extra)
 
 
 SupervisorLogServer: SupervisorLogServer = SupervisorLogServer()

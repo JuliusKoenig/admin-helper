@@ -12,7 +12,7 @@ DocumentRoot "{{ apache.document_root.absolute() | ensure_path | unix_path }}"
 LogLevel debug
 ErrorLog /dev/stderr
 LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\"" combined
-CustomLog /dev/stderr combined
+CustomLog /dev/stdout combined
 
 LoadModule mpm_event_module {{ apache.module_directory_path }}/mod_mpm_event.so
 LoadModule auth_basic_module {{ apache.module_directory_path }}/mod_auth_basic.so
