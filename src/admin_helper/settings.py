@@ -1,6 +1,8 @@
 import encodings
+import getpass
 import logging
 import platform
+# import platform
 import sys
 from enum import Enum
 from ipaddress import IPv4Address
@@ -10,8 +12,11 @@ from typing import IO, Any
 from pydantic import Field, BaseModel, field_validator, FilePath
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from admin_helper.exceptions import OperatingSystemNotSupportedException
+from admin_helper.helper import is_running_in_docker
 
-class Settings(BaseSettings):
+
+class AdminHelperSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ADMIN_HELPER_",
                                       env_nested_delimiter="__")
     debug: bool = Field(default=False, title="Debug", description="Whether to run in debug mode")
@@ -84,9 +89,9 @@ class Settings(BaseSettings):
             STDERR = "stderr"
 
             def get_file(self) -> IO[str] | Any:
-                if self == Settings.Logger.OutFiles.STDOUT:
+                if self == AdminHelperSettings.Logger.OutFiles.STDOUT:
                     return sys.stdout
-                elif self == Settings.Logger.OutFiles.STDERR:
+                elif self == AdminHelperSettings.Logger.OutFiles.STDERR:
                     return sys.stderr
                 raise ValueError(f"Unknown outfile '{self}'.")
 
@@ -201,10 +206,10 @@ class Settings(BaseSettings):
                                    description="The supervisor settings")
 
     class Apache(BaseModel):
-        binary_path: FilePath = Field(default=Path("/usr/sbin/apache2") if platform.system() == "Linux" else Path("/usr/sbin/httpd"),
+        binary_path: FilePath = Field(default=Path("/usr/sbin/apache2"),
                                       title="Apache Binary Path",
                                       description="Path to the Apache/httpd binary")
-        module_directory_path: Path = Field(default=Path("/usr/lib/apache2/modules") if platform.system() == "Linux" else Path("/usr/libexec/apache2"),
+        module_directory_path: Path = Field(default=Path("/usr/lib/apache2/modules"),
                                             title="Apache Module Directory Path",
                                             description="Path to the Apache modules directory")
         host: IPv4Address = Field(default=IPv4Address("0.0.0.0"),
@@ -216,10 +221,10 @@ class Settings(BaseSettings):
                           title="Apache Port",
                           description="The port for the Apache server")
 
-        user: str = Field(default="www-data" if platform.system() == "Linux" else "_www",
+        user: str = Field(default="www-data",
                           title="Apache User",
                           description="The user for the Apache server")
-        group: str = Field(default="www-data" if platform.system() == "Linux" else "_www",
+        group: str = Field(default="www-data",
                            title="Apache Group",
                            description="The group for the Apache server")
 
@@ -255,5 +260,18 @@ class Settings(BaseSettings):
 
         super().model_post_init(context)
 
-
-settings = Settings()
+if is_running_in_docker(): # Production settings for Docker
+    AdminHelperSettings: AdminHelperSettings = AdminHelperSettings()
+else:
+    if platform.system() == "Linux": # Dev settings on Linux.
+        AdminHelperSettings: AdminHelperSettings = AdminHelperSettings(debug=True,
+                                                                       apache=AdminHelperSettings.Apache(user=getpass.getuser(),
+                                                                                                         group=getpass.getuser()))
+    elif platform.system() == "Darwin": # Dev settings on macOS.
+        AdminHelperSettings: AdminHelperSettings = AdminHelperSettings(debug=True,
+                                                                       apache=AdminHelperSettings.Apache(binary_path=Path("/usr/sbin/httpd"),
+                                                                                                         module_directory_path=Path("/usr/libexec/apache2"),
+                                                                                                         user=getpass.getuser(),
+                                                                                                         group=getpass.getuser()))
+    else:
+        raise OperatingSystemNotSupportedException(f"The operating system {platform.system()} is not supported")

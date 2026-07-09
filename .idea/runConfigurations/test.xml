@@ -1,5 +1,5 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="conftest" type="PythonConfigurationType" factoryName="Python">
+  <configuration default="false" name="test" type="PythonConfigurationType" factoryName="Python">
     <module name="admin-helper" />
     <option name="ENV_FILES" value="$PROJECT_DIR$/.env" />
     <option name="INTERPRETER_OPTIONS" value="" />
@@ -16,7 +16,7 @@
     <option name="DEBUG_JUST_MY_CODE" value="false" />
     <option name="RUN_TOOL" value="" />
     <option name="SCRIPT_NAME" value="admin_helper" />
-    <option name="PARAMETERS" value="conftest" />
+    <option name="PARAMETERS" value="test" />
     <option name="SHOW_COMMAND_LINE" value="false" />
     <option name="EMULATE_TERMINAL" value="false" />
     <option name="MODULE_MODE" value="true" />

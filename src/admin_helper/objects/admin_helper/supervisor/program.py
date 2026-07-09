@@ -2,7 +2,7 @@ import getpass
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from admin_helper.settings import settings
+from admin_helper.settings import AdminHelperSettings
 from admin_helper.objects.base import BaseObject
 
 
@@ -10,6 +10,7 @@ from admin_helper.objects.base import BaseObject
 class SupervisorProgram(BaseObject,
                         abstract=True):
     command: str = field(init=False,
+                         repr=AdminHelperSettings.debug,
                          metadata={"frozen": True})
     stdout_logfile_maxbytes: int = field(init=False,
                                          repr=False,
@@ -47,12 +48,12 @@ class SupervisorProgram(BaseObject,
 
         # stdout_logfile_maxbytes
         if stdout_logfile_maxbytes is None:
-            stdout_logfile_maxbytes = settings.supervisor.default_logfile_maxbytes
+            stdout_logfile_maxbytes = AdminHelperSettings.supervisor.default_logfile_maxbytes
         cls.stdout_logfile_maxbytes = stdout_logfile_maxbytes
 
         # stdout_logfile_backups
         if stdout_logfile_backups is None:
-            stdout_logfile_backups = settings.supervisor.default_logfile_backups
+            stdout_logfile_backups = AdminHelperSettings.supervisor.default_logfile_backups
         cls.stdout_logfile_backups = stdout_logfile_backups
 
         # cwd
@@ -73,4 +74,4 @@ class SupervisorProgram(BaseObject,
 
     @property
     def stdout_logfile_path(self):
-        return settings.supervisor.logfile_parent_directory / "programs" / f"{self.name}.log"
+        return AdminHelperSettings.supervisor.logfile_parent_directory / "programs" / f"{self.name}.log"

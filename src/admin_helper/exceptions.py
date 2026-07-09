@@ -7,12 +7,15 @@ if TYPE_CHECKING:
 class AdminHelperException(Exception):
     ...
 
+class OperatingSystemNotSupportedException(AdminHelperException):
+    ...
+
 class BroadcastException(AdminHelperException):
     def __init__(self,
-                 object: Optional["BaseObject"] = None,
+                 obj: Optional["BaseObject"] = None,
                  method_name: str | None = None,
                  original_exception: Exception | None = None):
-        self.object = object
+        self.object = obj
         self.method_name = method_name
         self.original_exception = original_exception
         self.errors: list[BroadcastException] = []

@@ -8,9 +8,9 @@ from supervisor import childutils
 
 os.environ["ADMIN_HELPER_LOGGER__DISABLED"] = "1"  # disable all logging
 
-from admin_helper.settings import settings
+from admin_helper.settings import AdminHelperSettings
 
-SOCKET_FILE_PATH = (settings.run_directory / "supervisord" / f"{Path(__file__).with_suffix("").name}.sock").absolute()
+SOCKET_FILE_PATH = (AdminHelperSettings.run_directory / "supervisord" / f"{Path(__file__).with_suffix("").name}.sock").absolute()
 
 
 def send(event: dict):

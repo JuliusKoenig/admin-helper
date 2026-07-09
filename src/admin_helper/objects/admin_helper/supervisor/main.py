@@ -6,7 +6,7 @@ from supervisor.options import ServerOptions
 from supervisor.states import SupervisorStates
 from supervisor.supervisord import go as supervisord_go
 
-from admin_helper.settings import settings
+from admin_helper.settings import AdminHelperSettings
 from admin_helper.objects.admin_helper.main import AdminHelper
 from admin_helper.objects.admin_helper.supervisor.logger import SupervisorLogger
 from admin_helper.objects.admin_helper.supervisor.program import SupervisorProgram
@@ -19,7 +19,7 @@ class Supervisor(RenderFileObject,
                  parent=AdminHelper,
                  logger=SupervisorLogger,
                  src="supervisord.conf.j2",
-                 dest=settings.config_directory / "supervisord.conf",
+                 dest=AdminHelperSettings.config_directory / "supervisord.conf",
                  overwrite=True):
     class SupervisorServerOptions(ServerOptions):
         logger: SupervisorLogger | logging.Logger
@@ -33,19 +33,19 @@ class Supervisor(RenderFileObject,
             for msg in self.parse_infos:
                 self.logger.info(msg)
 
-    pid_file_path: Path = field(default=settings.run_directory / "supervisord" / "supervisord.pid",
+    pid_file_path: Path = field(default=AdminHelperSettings.run_directory / "supervisord" / "supervisord.pid",
                                 repr=False,
                                 metadata={"frozen": True})
-    socket_file_path: Path = field(default=settings.run_directory / "supervisord" / "supervisord.sock",
+    socket_file_path: Path = field(default=AdminHelperSettings.run_directory / "supervisord" / "supervisord.sock",
                                    repr=False,
                                    metadata={"frozen": True})
-    dashboard: bool = field(default=settings.supervisor.dashboard,
+    dashboard: bool = field(default=AdminHelperSettings.supervisor.dashboard,
                             repr=False,
                             metadata={"frozen": True})
-    dashboard_host: str = field(default=settings.supervisor.dashboard_host,
+    dashboard_host: str = field(default=AdminHelperSettings.supervisor.dashboard_host,
                                 repr=False,
                                 metadata={"frozen": True})
-    dashboard_port: int = field(default=settings.supervisor.dashboard_port,
+    dashboard_port: int = field(default=AdminHelperSettings.supervisor.dashboard_port,
                                 repr=False,
                                 metadata={"frozen": True})
     log_listener_script_path: Path = field(default=Path(__file__).parent / "log_listener.py",

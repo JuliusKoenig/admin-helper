@@ -6,8 +6,8 @@ from pathlib import Path
 
 from rich.logging import RichHandler
 
-from admin_helper.console import console
-from admin_helper.settings import settings, Settings
+from admin_helper.console import AdminHelperConsole
+from admin_helper.settings import AdminHelperSettings
 
 
 class AdminHelperLogger(logging.Logger):
@@ -25,7 +25,7 @@ class AdminHelperLogger(logging.Logger):
         def __init__(self,
                      name: str,
                      filename: str | Path,
-                     mode: Settings.Logger.FileModes = Settings.Logger.FileModes.a,
+                     mode: AdminHelperSettings.Logger.FileModes = AdminHelperSettings.Logger.FileModes.a,
                      max_bytes: int = 0,
                      backup_count: int = 0,
                      encoding: str | None = None,
@@ -74,50 +74,50 @@ class AdminHelperLogger(logging.Logger):
         super().__init__(name)
 
         # set log level
-        self.setLevel(settings.logger.level.value)
+        self.setLevel(AdminHelperSettings.logger.level.value)
 
         # add null handler
         null_handler = logging.NullHandler()
         self.addHandler(null_handler)
 
         # add console handler
-        if not settings.logger.disabled and settings.logger.console:
+        if not AdminHelperSettings.logger.disabled and AdminHelperSettings.logger.console:
             ch = RichHandler(
-                console=console,
-                show_time=settings.logger.console_rich_show_time,
-                markup=settings.logger.console_rich_markup,
-                show_level=settings.logger.console_rich_show_level,
-                show_path=settings.logger.console_rich_show_path
+                console=AdminHelperConsole,
+                show_time=AdminHelperSettings.logger.console_rich_show_time,
+                markup=AdminHelperSettings.logger.console_rich_markup,
+                show_level=AdminHelperSettings.logger.console_rich_show_level,
+                show_path=AdminHelperSettings.logger.console_rich_show_path
             )
             ch.set_name(self.name)
-            if settings.logger.console_level is not None:
-                ch.setLevel(settings.logger.console_level.value)
-            ch.setFormatter(self.Formatter(settings.logger.console_format))
+            if AdminHelperSettings.logger.console_level is not None:
+                ch.setLevel(AdminHelperSettings.logger.console_level.value)
+            ch.setFormatter(self.Formatter(AdminHelperSettings.logger.console_format))
             self.addHandler(ch)
 
         # add file handler
-        if not settings.logger.disabled and settings.logger.file:
+        if not AdminHelperSettings.logger.disabled and AdminHelperSettings.logger.file:
             # check if log_file_path is set
-            if settings.logger.file_path is None:
+            if AdminHelperSettings.logger.file_path is None:
                 raise ValueError("Log file path not set")
 
             # check if log_file_path parent directory exists
-            if not settings.logger.file_path.parent.exists():
-                raise FileNotFoundError(f"Log file path parent directory not exist: '{settings.logger.file_path.parent}'")
+            if not AdminHelperSettings.logger.file_path.parent.exists():
+                raise FileNotFoundError(f"Log file path parent directory not exist: '{AdminHelperSettings.logger.file_path.parent}'")
 
             fh = self.TarRotatingFileHandler(
                 name=self.name,
-                filename=settings.logger.file_path,
-                mode=settings.logger.file_mode,
-                max_bytes=settings.logger.file_max_bytes,
-                backup_count=settings.logger.file_backup_count,
-                encoding=settings.logger.file_encoding,
-                delay=settings.logger.file_delay,
-                archive_backup_count=settings.logger.file_archive_backup_count
+                filename=AdminHelperSettings.logger.file_path,
+                mode=AdminHelperSettings.logger.file_mode,
+                max_bytes=AdminHelperSettings.logger.file_max_bytes,
+                backup_count=AdminHelperSettings.logger.file_backup_count,
+                encoding=AdminHelperSettings.logger.file_encoding,
+                delay=AdminHelperSettings.logger.file_delay,
+                archive_backup_count=AdminHelperSettings.logger.file_archive_backup_count
             )
-            if settings.logger.file_level is not None:
-                fh.setLevel(settings.logger.file_level.value)
-            fh.setFormatter(self.Formatter(settings.logger.file_format))
+            if AdminHelperSettings.logger.file_level is not None:
+                fh.setLevel(AdminHelperSettings.logger.file_level.value)
+            fh.setFormatter(self.Formatter(AdminHelperSettings.logger.file_format))
             self.addHandler(fh)
 
         # log first message

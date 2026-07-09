@@ -5,7 +5,7 @@ from dataclasses import dataclass, field, fields
 from typing import TypeVar, Union, Any
 
 from admin_helper.exceptions import BroadcastException
-from admin_helper.settings import settings
+from admin_helper.settings import AdminHelperSettings
 
 T = TypeVar("T", bound="BaseObject")
 
@@ -96,7 +96,7 @@ class BaseObject(ABC):
 
     def broadcast_call(self,
                        _method_name: str,
-                       _wrap_errors: bool = not settings.debug,
+                       _wrap_errors: bool = not AdminHelperSettings.debug,
                        _stop_on_error: bool = True,
                        **method_kwargs) -> Any:
         self.logger.debug(f"Broadcasting {self} -> {_method_name}")

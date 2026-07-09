@@ -5,21 +5,26 @@ import os
 import platform
 
 from pathlib import Path
-from typing import Any, Union, Optional
+from typing import Any, Optional
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from admin_helper import __name__ as __module_name__
-from admin_helper.settings import settings
+from admin_helper.settings import AdminHelperSettings
 from admin_helper.objects.base import BaseObject
+
+RenderResult = list[tuple[bool, "RenderFileObject", str]]
+TestResult = list[tuple[bool, "RenderFileObject", str]]
 
 
 @dataclass
 class RenderFileObject(BaseObject,
                        abstract=True):
     src: Path = field(init=False,
+                      repr=AdminHelperSettings.debug,
                       metadata={"frozen": True})
     dest: Path = field(init=False,
+                       repr=AdminHelperSettings.debug,
                        metadata={"frozen": True})
     overwrite: bool = field(init=False,
                             repr=False,
@@ -120,7 +125,7 @@ class RenderFileObject(BaseObject,
         add("__object__", self)
         add(self.name, self)
         add("system", platform.system())
-        add("settings", settings)
+        add("settings", AdminHelperSettings)
         add("environment", os.environ)
         add("user", getpass.getuser())
         add("group", os.getgid())
@@ -148,10 +153,10 @@ class RenderFileObject(BaseObject,
             subfiles[child_name] = child
         return subfiles
 
-    def test(self) -> dict[str, tuple[bool, str]]:
-        result = {}
+    def test(self) -> TestResult:
+        result = []
         for broadcast_result in self.broadcast_call("test"):
-            result.update(broadcast_result)
+            result.extend(broadcast_result)
         try:
             self.logger.debug(f"Testing file {self} ...")
 
@@ -172,19 +177,19 @@ class RenderFileObject(BaseObject,
             self.logger.debug(f"Output: {output}")
 
             self.logger.debug(f"File {self} has been tested successfully.")
-            result[self.name] = (True, "[green]Test passed.[/green]")
+            result.append((True, self, "Test passed"))
         except Exception as e:
-            result[self.name] = (False, f"[red]Test failed[/red]: {e}")
+            result.append((False, self, f"[red]Test failed: {e}"))
             self.logger.error(f"Testing file {self} failed: {e}")
-            if settings.debug:
+            if AdminHelperSettings.debug:
                 raise e
 
         return result
 
-    def render(self) -> dict[str, tuple[bool, str]]:
-        result = {}
+    def render(self) -> RenderResult:
+        result = []
         for broadcast_result in self.broadcast_call("render"):
-            result.update(broadcast_result)
+            result.extend(broadcast_result)
         try:
             self.logger.debug(f"Rendering file {self} ...")
 
@@ -216,11 +221,11 @@ class RenderFileObject(BaseObject,
                 output_file.write(output)
 
             self.logger.debug(f"File {self} has been rendered.")
-            result[self.name] = (True, "[green]Render passed.[/green]")
+            result.append((True, self, "Render passed"))
         except Exception as e:
-            result[self.name] = (False, f"[red]Render failed[/red]: {e}")
+            result.append((False, self, f"Render failed: {e}"))
             self.logger.error(f"Rendering file {self} failed: {e}")
-            if settings.debug:
+            if AdminHelperSettings.debug:
                 raise e
 
         return result
