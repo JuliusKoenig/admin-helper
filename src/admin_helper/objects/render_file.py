@@ -30,18 +30,12 @@ class RenderFileObject(BaseObject,
 
     def __init_subclass__(cls,
                           *,
-                          abstract: bool = False,
-                          name: str | None = None,
-                          parent: Union["BaseObject", Any, None] = None,
                           src: str | Path,
                           dest: str | Path,
                           overwrite: bool = False,
                           environment_options: dict[str, Any] | None = None,
                           **kwargs):
-        super().__init_subclass__(abstract=abstract,
-                                  name=name,
-                                  parent=parent,
-                                  **kwargs)
+        super().__init_subclass__(**kwargs)
 
         # src
         if not isinstance(src, Path):

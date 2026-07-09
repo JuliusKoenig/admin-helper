@@ -15,8 +15,6 @@ class SupervisorLogServer(ThreadObject,
                           parent=Supervisor):
     socket_file_path: Path = field(default=SOCKET_FILE_PATH)
 
-    __str_name__: str | None = "SupervisorLogServer"
-
     def __post_init__(self):
         if not isinstance(self.socket_file_path, Path):
             self.socket_file_path = Path(self.socket_file_path)

@@ -1,7 +1,6 @@
 import getpass
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Union, Any
 
 from admin_helper.settings import settings
 from admin_helper.objects.base import BaseObject
@@ -33,9 +32,6 @@ class SupervisorProgram(BaseObject,
 
     def __init_subclass__(cls,
                           *,
-                          abstract: bool = False,
-                          name: str | None = None,
-                          parent: Union["BaseObject", Any, None] = None,
                           command: str,
                           stdout_logfile_maxbytes: int | None = None,
                           stdout_logfile_backups: int | None = None,
@@ -44,10 +40,7 @@ class SupervisorProgram(BaseObject,
                           autostart: bool = True,
                           autorestart: bool = True,
                           **kwargs):
-        super().__init_subclass__(abstract=abstract,
-                                  name=name,
-                                  parent=parent,
-                                  **kwargs)
+        super().__init_subclass__(**kwargs)
 
         # command
         cls.command = command

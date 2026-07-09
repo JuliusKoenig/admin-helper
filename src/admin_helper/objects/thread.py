@@ -26,16 +26,11 @@ class ThreadObject(StartObject):
 
     def __init_subclass__(cls,
                           *,
-                          abstract: bool = False,
-                          name: str | None = None,
-                          parent: Union["StartObject", Any, None] = None,
                           loop: bool = False,
                           loop_delay: int = 1,
                           **kwargs):
-        super().__init_subclass__(abstract=abstract,
-                                  name=name,
-                                  parent=parent,
-                                  **kwargs)
+        super().__init_subclass__(**kwargs)
+
         # loop
         cls.loop = loop
 

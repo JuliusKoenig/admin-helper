@@ -12,7 +12,7 @@ class AdminHelper(StartObject, RenderFileObject,
                   logger=AdminHelperLogger,
                   src="README.md.j2",
                   dest=settings.base_directory / "README.md",
-                  overwrite=True,):
+                  overwrite=True):
     ...
 
 
