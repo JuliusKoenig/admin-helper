@@ -26,6 +26,10 @@ class DuplicateRegistrationNameError(RegistryError):
     pass
 
 
+class DuplicateObjectNameError(RegistryError):
+    pass
+
+
 class UnregisteredSubclassError(RegistryError):
     pass
 
@@ -51,16 +55,17 @@ class ObjectRegistration:
     constructor_args: tuple[Any, ...] = ()
     constructor_kwargs: dict[str, Any] = field(default_factory=dict)
 
-    instance: BaseObject | None = None
+    instances: dict[str, BaseObject] = field(default_factory=dict)
 
     @property
     def instantiated(self) -> bool:
-        return self.instance is not None
+        return bool(self.instances)
 
 
 @dataclass(frozen=True, slots=True)
 class ConstructionContext:
     registration: ObjectRegistration
+    object_name: str
     parent: BaseObject | None
 
 
@@ -71,6 +76,8 @@ class ObjectRegistry:
     def __init__(self) -> None:
         self._registrations_by_name: dict[str, ObjectRegistration] = {}
         self._registrations_by_class: dict[type[BaseObject], ObjectRegistration] = {}
+        self._instances_by_name: dict[str, BaseObject] = {}
+        self._instance_registrations: dict[int, ObjectRegistration] = {}
 
         self._building = False
         self._built = False
@@ -98,14 +105,9 @@ class ObjectRegistry:
             raise RegistryError(f"Class {cls.__module__}.{cls.__qualname__} is already "
                                 f"registered as {existing.name!r}.")
 
-        if abstract:
-            if parent is not None:
-                raise RegistryError(f"Abstract registration {normalized_name!r} cannot have "
-                                    "an object parent.")
-
-            if constructor_args or kwargs:
-                raise RegistryError(f"Abstract registration {normalized_name!r} cannot have "
-                                    "constructor arguments.")
+        if abstract and (constructor_args or kwargs):
+            raise RegistryError(f"Abstract registration {normalized_name!r} cannot have "
+                                "constructor arguments.")
 
         registration = ObjectRegistration(name=normalized_name,
                                           cls=cls,
@@ -139,7 +141,11 @@ class ObjectRegistry:
                 if registration.abstract:
                     continue
 
-                self._instantiate_registration(registration)
+                if registration.parent_reference is not None:
+                    continue
+
+                self._instantiate_registration(registration=registration,
+                                               parent_instance=None)
 
             self._built = True
 
@@ -151,44 +157,68 @@ class ObjectRegistry:
             self._building = False
 
     def _instantiate_registration(self,
-                                  registration: ObjectRegistration) -> BaseObject:
+                                  registration: ObjectRegistration,
+                                  parent_instance: BaseObject | None) -> BaseObject:
         if registration.abstract:
-            raise RegistryError(f"Abstract registration {registration.name!r} cannot be "
-                                "instantiated.")
+            raise RegistryError(f"Abstract registration {registration.name!r} cannot be instantiated.")
 
-        if registration.instance is not None:
-            return registration.instance
+        object_name = self._build_object_name(registration=registration,
+                                              parent_instance=parent_instance)
 
-        parent_registration = self._resolve_parent_registration(registration)
+        if object_name in registration.instances:
+            return registration.instances[object_name]
 
-        parent_instance: BaseObject | None = None
+        if object_name in self._instances_by_name:
+            existing = self._instances_by_name[object_name]
 
-        if parent_registration is not None:
-            if parent_registration.abstract:
-                raise ParentResolutionError(f"Object {registration.name!r} uses abstract registration "
-                                            f"{parent_registration.name!r} as its object parent.")
-
-            parent_instance = self._instantiate_registration(parent_registration)
+            raise DuplicateObjectNameError(f"Object name {object_name!r} is already used by {type(existing).__module__}.{type(existing).__qualname__}.")
 
         context = ConstructionContext(registration=registration,
+                                      object_name=object_name,
                                       parent=parent_instance)
 
         token = _construction_context.set(context)
 
         try:
-            instance = registration.cls(*registration.constructor_args,
-                                        **registration.constructor_kwargs)
+            instance = registration.cls(*registration.constructor_args, **registration.constructor_kwargs)
         except Exception as error:
-            raise RegistryError(f"Could not instantiate registration "
-                                f"{registration.name!r} using "
-                                f"{registration.cls.__module__}."
-                                f"{registration.cls.__qualname__}: {error}") from error
+            raise RegistryError(f"Could not instantiate registration {registration.name!r} as object {object_name!r} using "
+                                f"{registration.cls.__module__}.{registration.cls.__qualname__}: {error}") from error
         finally:
             _construction_context.reset(token)
 
-        registration.instance = instance
+        registration.instances[object_name] = instance
+        self._instances_by_name[object_name] = instance
+        self._instance_registrations[id(instance)] = registration
+
+        self._instantiate_children(parent_instance=instance, parent_registration=registration)
 
         return instance
+
+    def _instantiate_children(self,
+                              parent_instance: BaseObject,
+                              parent_registration: ObjectRegistration) -> None:
+        own_parent_registration = self._resolve_parent_registration(parent_registration)
+
+        for child_registration in self._registrations_by_name.values():
+            if child_registration.abstract:
+                continue
+
+            template_parent = self._resolve_parent_registration(child_registration)
+
+            if template_parent is None:
+                continue
+
+            if template_parent.abstract:
+                if template_parent is own_parent_registration:
+                    continue
+
+                if not isinstance(parent_instance, template_parent.cls):
+                    continue
+            elif template_parent is not parent_registration:
+                continue
+
+            self._instantiate_registration(registration=child_registration, parent_instance=parent_instance)
 
     def _validate_all_subclasses_registered(self) -> None:
         missing: list[type[BaseObject]] = []
@@ -207,13 +237,10 @@ class ObjectRegistry:
 
         raise UnregisteredSubclassError("The following BaseObject subclasses were not registered:\n"
                                         f"{missing_names}\n"
-                                        "Decorate every subclass with @register_abstract(...) or "
-                                        "@register_instance(...).")
+                                        "Decorate every subclass with @register(...).")
 
     def _validate_parent_references(self) -> None:
         for registration in self._registrations_by_name.values():
-            if registration.abstract:
-                continue
             self._resolve_parent_registration(registration)
 
     def _validate_no_parent_loops(self) -> None:
@@ -225,10 +252,7 @@ class ObjectRegistry:
                 return
 
             if registration.name in visiting:
-                raise ObjectTreeLoopError(
-                    f"Parent loop detected at registration "
-                    f"{registration.name!r}."
-                )
+                raise ObjectTreeLoopError(f"Parent loop detected at registration {registration.name!r}.")
 
             visiting.add(registration.name)
 
@@ -241,8 +265,7 @@ class ObjectRegistry:
             visited.add(registration.name)
 
         for registration in self._registrations_by_name.values():
-            if not registration.abstract:
-                visit(registration)
+            visit(registration)
 
     @staticmethod
     def _all_subclasses(cls: type[BaseObject]) -> tuple[type[BaseObject], ...]:
@@ -275,27 +298,25 @@ class ObjectRegistry:
             try:
                 return self._registrations_by_name[normalized_name]
             except KeyError:
-                raise ParentResolutionError(f"Parent {normalized_name!r} of registration "
-                                            f"{registration.name!r} is not registered.") from None
+                raise ParentResolutionError(f"Parent {normalized_name!r} of registration {registration.name!r} is not registered.") from None
 
         if isinstance(reference, type) and issubclass(reference, BaseObject):
             try:
                 return self._registrations_by_class[reference]
             except KeyError:
-                raise ParentResolutionError(f"Parent class {reference.__module__}."
-                                            f"{reference.__qualname__} of registration "
-                                            f"{registration.name!r} is not registered.") from None
+                raise ParentResolutionError(f"Parent class {reference.__module__}.{reference.__qualname__} "
+                                            f"of registration {registration.name!r} is not registered.") from None
 
-        raise ParentResolutionError(f"Invalid parent reference {reference!r} for registration "
-                                    f"{registration.name!r}.")
+        raise ParentResolutionError(f"Invalid parent reference {reference!r} for registration {registration.name!r}.")
 
-    def get_registration(self, name: str) -> ObjectRegistration:
+    def get_registration(self,
+                         name: str) -> ObjectRegistration:
         normalized_name = self._normalize_name(name)
 
         try:
             return self._registrations_by_name[normalized_name]
         except KeyError:
-            raise KeyError(f"No object is registered as {normalized_name!r}.") from None
+            raise KeyError(f"No registration exists as {normalized_name!r}.") from None
 
     def get_registration_by_class(self,
                                   cls: type[T]) -> ObjectRegistration:
@@ -305,7 +326,8 @@ class ObjectRegistry:
             raise KeyError(f"Class {cls.__module__}.{cls.__qualname__} is not registered.") from None
 
     @overload
-    def get_by_name(self, name: str) -> BaseObject:
+    def get_by_name(self,
+                    name: str) -> BaseObject:
         ...
 
     @overload
@@ -317,27 +339,21 @@ class ObjectRegistry:
     def get_by_name(self,
                     name: str,
                     expected_type: type[T] | None = None) -> BaseObject | T:
-        registration = self.get_registration(name)
+        normalized_name = self._normalize_name(name)
 
-        if registration.abstract:
-            raise TypeError(f"Registration {registration.name!r} is abstract and does "
-                            "not have an instance.")
+        try:
+            instance = self._instances_by_name[normalized_name]
+        except KeyError:
+            raise KeyError(f"No instantiated object exists as {normalized_name!r}.") from None
 
-        if registration.instance is None:
-            raise RuntimeError(f"Registration {registration.name!r} has not been "
-                               "instantiated. Call object_registry.instantiate_all() first.")
-
-        instance = registration.instance
-
-        if (expected_type is not None and not isinstance(instance, expected_type)):
-            raise TypeError(f"Registration {registration.name!r} contains "
-                            f"{type(instance).__name__}, not "
-                            f"{expected_type.__name__}.")
+        if expected_type is not None and not isinstance(instance, expected_type):
+            raise TypeError(f"Object {normalized_name!r} contains {type(instance).__name__}, not {expected_type.__name__}.")
 
         return instance
 
     @overload
-    def get_class(self, name: str) -> type[BaseObject]:
+    def get_class(self,
+                  name: str) -> type[BaseObject]:
         ...
 
     @overload
@@ -363,15 +379,9 @@ class ObjectRegistry:
 
     def get_by_type(self,
                     expected_type: type[T]) -> tuple[T, ...]:
-        result: list[T] = []
-
-        for registration in self._registrations_by_name.values():
-            instance = registration.instance
-
-            if instance is not None and isinstance(instance, expected_type):
-                result.append(instance)
-
-        return tuple(result)
+        return tuple(instance
+                     for instance in self._instances_by_name.values()
+                     if isinstance(instance, expected_type))
 
     def children_of(self,
                     parent: BaseObject) -> tuple[BaseObject, ...]:
@@ -379,13 +389,13 @@ class ObjectRegistry:
 
     def get_child_by_name(self,
                           parent: BaseObject,
-                          name: str, ) -> BaseObject | None:
-        try:
-            obj = self.get_by_name(name)
-        except KeyError:
-            return None
+                          name: str) -> BaseObject | None:
+        normalized_name = self._normalize_name(name)
+        full_name = f"{parent.name}.{normalized_name}"
 
-        if obj.parent is not parent:
+        obj = self._instances_by_name.get(full_name)
+
+        if obj is None or obj.parent is not parent:
             return None
 
         return obj
@@ -399,7 +409,7 @@ class ObjectRegistry:
 
     def attach_child(self,
                      parent: BaseObject,
-                     child: T, ) -> T:
+                     child: T) -> T:
         if parent is child:
             raise ObjectTreeLoopError(f"{child.name!r} cannot be its own parent.")
 
@@ -407,8 +417,7 @@ class ObjectRegistry:
 
         while current is not None:
             if current is child:
-                raise ObjectTreeLoopError(f"Attaching {child.name!r} below {parent.name!r} "
-                                          "would create a parent loop.")
+                raise ObjectTreeLoopError(f"Attaching {child.name!r} below {parent.name!r} would create a parent loop.")
 
             current = current.parent
 
@@ -420,8 +429,26 @@ class ObjectRegistry:
         if old_parent is not None and child in old_parent._children:
             old_parent._children.remove(child)
 
+        old_name = child.name
+        new_name = f"{parent.name}.{child.registration_name}"
+
+        if new_name != old_name and new_name in self._instances_by_name:
+            raise DuplicateObjectNameError(f"Object name {new_name!r} already exists.")
+
         with child._unlocked():
             child.parent = parent
+            child.name = new_name
+
+        if old_name in self._instances_by_name:
+            del self._instances_by_name[old_name]
+
+        self._instances_by_name[new_name] = child
+
+        registration = self._instance_registrations.get(id(child))
+
+        if registration is not None:
+            registration.instances.pop(old_name, None)
+            registration.instances[new_name] = child
 
         if child not in parent._children:
             parent._children.append(child)
@@ -436,30 +463,37 @@ class ObjectRegistry:
         return tuple(self._registrations_by_name.values())
 
     def instances(self) -> tuple[BaseObject, ...]:
-        return tuple(registration.instance
-                     for registration in self._registrations_by_name.values()
-                     if registration.instance is not None)
+        return tuple(self._instances_by_name.values())
 
     def root_objects(self) -> tuple[BaseObject, ...]:
         return tuple(instance
                      for instance in self.instances()
                      if instance.parent is None)
 
-    def __contains__(self, name: str) -> bool:
-        return self._normalize_name(name) in self._registrations_by_name
+    def __contains__(self,
+                     name: str) -> bool:
+        return self._normalize_name(name) in self._instances_by_name
 
     def __iter__(self) -> Iterator[ObjectRegistration]:
         return iter(self._registrations_by_name.values())
 
+    def _build_object_name(self,
+                           registration: ObjectRegistration,
+                           parent_instance: BaseObject | None) -> str:
+        if parent_instance is None:
+            return registration.name
+
+        return f"{parent_instance.name}.{registration.name}"
+
     def _reset_instances(self) -> None:
+        for instance in self._instances_by_name.values():
+            instance._children.clear()
+
         for registration in self._registrations_by_name.values():
-            instance = registration.instance
+            registration.instances.clear()
 
-            if instance is not None:
-                instance._children.clear()
-
-            registration.instance = None
-
+        self._instances_by_name.clear()
+        self._instance_registrations.clear()
         self._built = False
 
     @staticmethod
@@ -467,7 +501,7 @@ class ObjectRegistry:
         normalized_name = name.strip()
 
         if not normalized_name:
-            raise ValueError("Registration name cannot be empty.")
+            raise ValueError("Name cannot be empty.")
 
         return normalized_name
 
@@ -504,25 +538,25 @@ class BaseObject(ABC):
                             repr=False,
                             metadata={"frozen": True})
 
+    _registration_name: str = field(init=False,
+                                    repr=False,
+                                    metadata={"frozen": True})
+
     def __post_init__(self) -> None:
         context = _construction_context.get()
 
         if context is None:
-            raise RuntimeError(f"{type(self).__module__}.{type(self).__qualname__} must be "
-                               "instantiated through ObjectRegistry.instantiate_all().")
+            raise RuntimeError(f"{type(self).__module__}.{type(self).__qualname__} must be instantiated through ObjectRegistry.instantiate_all().")
 
         registration = context.registration
 
         object.__setattr__(self, "_init", False)
-        object.__setattr__(self, "name", registration.name)
+        object.__setattr__(self, "name", context.object_name)
         object.__setattr__(self, "parent", context.parent)
         object.__setattr__(self, "_abstract", registration.abstract)
+        object.__setattr__(self, "_registration_name", registration.name)
 
-        logger_name = registration.name
-
-        if context.parent is not None:
-            logger_name = f"{context.parent.logger.name}.{registration.name}"
-
+        logger_name = context.object_name
         logger = logging.getLogger(logger_name)
 
         object.__setattr__(self, "logger", logger)
@@ -544,19 +578,12 @@ class BaseObject(ABC):
             dataclass_field = next((dataclass_field for dataclass_field in fields(self) if dataclass_field.name == key), None)
 
             if dataclass_field is not None and dataclass_field.metadata.get("frozen", False):
-                raise AttributeError(f"Field {dataclass_field.name!r} is frozen and cannot "
-                                     "be modified.")
+                raise AttributeError(f"Field {dataclass_field.name!r} is frozen and cannot be modified.")
 
         super().__setattr__(key, value)
 
     @contextmanager
     def _unlocked(self) -> Iterator[BaseObject]:
-        """
-        Deaktiviert den Schreibschutz vorübergehend.
-
-        Der vorherige Zustand wird auch bei einer Exception wiederhergestellt.
-        """
-
         previous_state = self._init
         object.__setattr__(self, "_init", False)
 
@@ -564,6 +591,10 @@ class BaseObject(ABC):
             yield self
         finally:
             object.__setattr__(self, "_init", previous_state)
+
+    @property
+    def registration_name(self) -> str:
+        return self._registration_name
 
     @property
     def root_parent(self) -> BaseObject:
@@ -631,8 +662,8 @@ class BaseObject(ABC):
         if child is None:
             return None
 
-        if expected_type is not None and not isinstance(child, expected_type, ):
-            raise TypeError(f"Child {name!r} is {type(child).__name__}, not  {expected_type.__name__}.")
+        if expected_type is not None and not isinstance(child, expected_type):
+            raise TypeError(f"Child {name!r} is {type(child).__name__}, not {expected_type.__name__}.")
 
         return child
 
@@ -645,7 +676,7 @@ class BaseObject(ABC):
                        _wrap_errors: bool = not AdminHelperSettings.debug,
                        _stop_on_error: bool = True,
                        **method_kwargs: Any) -> list[Any]:
-        self.logger.debug("Broadcasting %s -> %s", self, _method_name, )
+        self.logger.debug("Broadcasting %s -> %s", self, _method_name)
 
         results: list[Any] = []
 
@@ -656,12 +687,12 @@ class BaseObject(ABC):
                 try:
                     results.append(method(**method_kwargs))
                 except Exception as error:
-                    self.logger.error("Error while broadcasting %s -> %s: %s", self, _method_name, error, )
+                    self.logger.error("Error while broadcasting %s -> %s: %s", self, _method_name, error)
 
                     if not _wrap_errors:
                         raise
 
-                    broadcast_error = BroadcastException(self, _method_name, error, )
+                    broadcast_error = BroadcastException(self, _method_name, error)
 
                     results.append(broadcast_error)
 
@@ -669,13 +700,13 @@ class BaseObject(ABC):
                         broadcast_error.finalize()
                         raise broadcast_error
             else:
-                results.append(child.broadcast_call(_method_name=_method_name, _wrap_errors=_wrap_errors, _stop_on_error=_stop_on_error, **method_kwargs, ))
+                results.append(child.broadcast_call(_method_name=_method_name, _wrap_errors=_wrap_errors, _stop_on_error=_stop_on_error, **method_kwargs))
 
         if _wrap_errors and not _stop_on_error:
             final_exception: BroadcastException | None = None
 
             for broadcast_result in results:
-                if not isinstance(broadcast_result, BroadcastException, ):
+                if not isinstance(broadcast_result, BroadcastException):
                     continue
 
                 if final_exception is None:
@@ -703,13 +734,14 @@ def is_abstract(obj: BaseObject | type[BaseObject] | Any) -> bool:
 
 
 def default_object_name(cls: type[BaseObject]) -> str:
-    return re.sub(r"(?<!^)(?=[A-Z])", "_", cls.__name__, ).lower()
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", cls.__name__).lower()
 
 
 @overload
 def register(*,
              abstract: Literal[True],
-             name: str | None = None) -> Callable[[type[T]], type[T]]:
+             name: str | None = None,
+             parent: ParentReference = None) -> Callable[[type[T]], type[T]]:
     ...
 
 
@@ -732,14 +764,12 @@ def register(*,
              kwargs: Mapping[str, Any] | None = None) -> Callable[[type[T]], type[T]]:
     def decorator(cls: type[T]) -> type[T]:
         if not issubclass(cls, BaseObject):
-            raise TypeError(f"{cls.__module__}.{cls.__qualname__} must be "
-                            f"a subclass of {BaseObject.__name__}.")
+            raise TypeError(f"{cls.__module__}.{cls.__qualname__} must be a subclass of {BaseObject.__name__}.")
 
         constructor_kwargs = dict(kwargs or {})
 
-        if abstract and (parent is not None or args or constructor_kwargs):
-            raise TypeError(f"Abstract class {cls.__qualname__!r} cannot define "
-                            "parent or constructor arguments.")
+        if abstract and (args or constructor_kwargs):
+            raise TypeError(f"Abstract class {cls.__qualname__!r} cannot define constructor arguments.")
 
         dataclass_cls = dataclass(cls)
 
@@ -753,20 +783,14 @@ def register(*,
     return decorator
 
 
-@register(abstract=True, name="apache_object")
+@register(abstract=True,
+          name="apache_object")
 class ApacheObject(BaseObject):
     enabled: bool
 
 
-@register(name="apache",
-          kwargs={"enabled": True,
-                  "config_file": "/etc/apache2/httpd.conf"})
-class ApacheRoot(ApacheObject):
-    config_file: str
-
-
 @register(name="static_files",
-          parent="apache",
+          parent=ApacheObject,
           kwargs={"enabled": True,
                   "url_path": "/static",
                   "directory": "/var/www/static"})
@@ -776,7 +800,7 @@ class StaticFilesApacheObject(ApacheObject):
 
 
 @register(name="reverse_proxy",
-          parent=ApacheRoot,
+          parent=ApacheObject,
           kwargs={"enabled": True,
                   "source": "/api",
                   "target": "http://127.0.0.1:8000"})
@@ -784,24 +808,25 @@ class ReverseProxyApacheObject(ApacheObject):
     source: str
     target: str
 
+@register(name="app")
+class App(BaseObject):
+    ...
 
-# class ForgottenObject(BaseObject):
-#     value: str
+@register(name="apache_1",
+          parent=App,
+          kwargs={"enabled": True,
+                  "config_file": "/etc/apache2/httpd.conf"})
+class ApacheRoot(ApacheObject):
+    config_file: str
 
-# @register_instance(
-#     name="first",
-#     parent="second",
-# )
-# class First(BaseObject):
-#     ...
-#
-#
-# @register_instance(
-#     name="second",
-#     parent="first",
-# )
-# class Second(BaseObject):
-#     ...
+
+@register(name="apache_2",
+          parent=App,
+          kwargs={"enabled": False,
+                  "config_file": "/tmp/apache2.conf"})
+class SecondApacheRoot(ApacheObject):
+    config_file: str
+
 
 def initialize_objects() -> None:
     object_registry.instantiate_all()
@@ -810,21 +835,19 @@ def initialize_objects() -> None:
 if __name__ == "__main__":
     initialize_objects()
 
-    apache = object_registry.get_by_name("apache", ApacheRoot)
+    apache_1 = object_registry.get_by_name("apache_1", ApacheRoot)
+    apache_2 = object_registry.get_by_name("apache_2", SecondApacheRoot)
 
-    static_files = object_registry.get_by_name("static_files", StaticFilesApacheObject)
+    static_files_1 = object_registry.get_by_name("apache_1.static_files", StaticFilesApacheObject)
+    static_files_2 = object_registry.get_by_name("apache_2.static_files", StaticFilesApacheObject)
 
-    print(apache.children)
-    print(apache.children_flat)
+    print(apache_1.children)
+    print(apache_2.children)
 
-    print(static_files.parent is apache)
-    # True
+    print(static_files_1.parent is apache_1)
+    print(static_files_2.parent is apache_2)
 
-    print(static_files.root_parent is apache)
-    # True
-
-    static_files = apache.get_child_by_name("static_files", StaticFilesApacheObject)
-
-    proxy_objects = apache.get_child_by_type(ReverseProxyApacheObject)
+    print(apache_1.get_child_by_name("static_files", StaticFilesApacheObject))
+    print(apache_2.get_child_by_name("static_files", StaticFilesApacheObject))
 
     print()
