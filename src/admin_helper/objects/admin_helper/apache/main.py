@@ -1,3 +1,4 @@
+import platform
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -55,6 +56,25 @@ class Apache(SupervisorProgram, RenderFileObject,
             if isinstance(child, ApacheRoute):
                 routes[child.name] = child
         return routes
+
+    @property
+    def modules(self) -> dict[str, Path]:
+        module = {
+            "mpm_event_module": self.module_directory_path / "mod_mpm_event.so",
+            "auth_basic_module": self.module_directory_path / "mod_auth_basic.so",
+            "authn_file_module": self.module_directory_path / "mod_authn_file.so",
+            "authz_core_module": self.module_directory_path / "mod_authz_core.so",
+            "authz_user_module": self.module_directory_path / "mod_authz_user.so",
+            "dir_module": self.module_directory_path / "mod_dir.so",
+            "mime_module": self.module_directory_path / "mod_mime.so",
+            "alias_module": self.module_directory_path / "mod_alias.so",
+            "proxy_module": self.module_directory_path / "mod_proxy.so",
+            "proxy_http_module": self.module_directory_path / "mod_proxy_http.so"
+        }
+        if platform.system() == "Darwin":
+            module["log_config_module"] = self.module_directory_path / "mod_log_config.so"
+            module["unixd_module"] = self.module_directory_path / "mod_unixd.so"
+        return module
 
 
 Apache: Apache = Apache()
