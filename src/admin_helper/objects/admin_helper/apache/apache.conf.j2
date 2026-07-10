@@ -1,29 +1,31 @@
-ServerRoot "{{ apache.server_root.absolute() | ensure_path | unix_path }}"
-PidFile "{{ apache.pid_file_path.parent.absolute() | ensure_path / apache.pid_file_path.name | unix_path }}"
-TypesConfig "{{ apache.mime_types_file_path.parent.absolute() | ensure_path / apache.mime_types_file_path.name | unix_path }}"
+ServerRoot "{{ apache.server_root.absolute() | ensure_path | as_str }}"
+PidFile "{{ apache.pid_file_path.absolute() | ensure_parent_path | as_str }}"
+TypesConfig "{{ apache.mime_types_file_path.absolute() | ensure_parent_path | as_str }}"
 Listen {{ apache.host }}:{{ apache.port }}
 ServerName localhost
 
 User {{ apache.user }}
 Group {{ apache.group }}
 
-DocumentRoot "{{ apache.document_root.absolute() | ensure_path | unix_path }}"
+DocumentRoot "{{ apache.document_root.absolute() | ensure_path | as_str }}"
 
 LogLevel debug
 ErrorLog /dev/stderr
 LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\"" combined
 CustomLog /dev/stdout combined
 
-LoadModule mpm_event_module {{ apache.module_directory_path }}/mod_mpm_event.so
-LoadModule auth_basic_module {{ apache.module_directory_path }}/mod_auth_basic.so
-LoadModule authn_file_module {{ apache.module_directory_path }}/mod_authn_file.so
-LoadModule authz_core_module {{ apache.module_directory_path }}/mod_authz_core.so
-LoadModule authz_user_module {{ apache.module_directory_path }}/mod_authz_user.so
-LoadModule dir_module {{ apache.module_directory_path }}/mod_dir.so
-LoadModule mime_module {{ apache.module_directory_path }}/mod_mime.so
-LoadModule alias_module {{ apache.module_directory_path }}/mod_alias.so{% if system == "Darwin" %}
-LoadModule log_config_module {{ apache.module_directory_path }}/mod_log_config.so
-LoadModule unixd_module {{ apache.module_directory_path }}/mod_unixd.so{% endif %}{% for route in apache.routes.values() %}
+LoadModule mpm_event_module "{{ (apache.module_directory_path / 'mod_mpm_event.so') | raise_is_not_file | as_str}}"
+LoadModule auth_basic_module "{{ (apache.module_directory_path / 'mod_auth_basic.so') | raise_is_not_file | as_str}}"
+LoadModule authn_file_module "{{ (apache.module_directory_path / 'mod_authn_file.so') | raise_is_not_file | as_str}}"
+LoadModule authz_core_module "{{ (apache.module_directory_path / 'mod_authz_core.so') | raise_is_not_file | as_str}}"
+LoadModule authz_user_module "{{ (apache.module_directory_path / 'mod_authz_user.so') | raise_is_not_file | as_str}}"
+LoadModule dir_module "{{ (apache.module_directory_path / 'mod_dir.so') | raise_is_not_file | as_str}}"
+LoadModule mime_module "{{ (apache.module_directory_path / 'mod_mime.so') | raise_is_not_file | as_str}}"
+LoadModule alias_module "{{ (apache.module_directory_path / 'mod_alias.so') | raise_is_not_file | as_str}}"
+LoadModule proxy_module "{{ (apache.module_directory_path / 'mod_proxy.so') | raise_is_not_file | as_str}}"
+LoadModule proxy_http_module "{{ (apache.module_directory_path / 'mod_proxy_http.so') | raise_is_not_file | as_str}}"{% if system == "Darwin" %}
+LoadModule log_config_module {{ (apache.module_directory_path / 'mod_log_config.so') | raise_is_not_file | as_str}}"
+LoadModule unixd_module {{ (apache.module_directory_path / 'mod_unixd.so') | raise_is_not_file | as_str}}"{% endif %}{% for route in apache.routes.values() %}
 
 # Route: {{ route }}
 {% include "route.conf.j2" %}{% endfor %}

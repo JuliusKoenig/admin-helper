@@ -16,13 +16,15 @@ class ApacheRoute(BaseObject, abstract=True):
 
     def __init_subclass__(cls,
                           *,
-                          type: str,
+                          type: str | None = None,
                           path: str | None = None,
                           auth_required: bool = True,
                           **kwargs):
         super().__init_subclass__(**kwargs)
 
         # type
+        if type is None:
+            raise AttributeError(f"Attribute 'type' of '{cls.__name__}' is required.")
         cls.type = type
 
         # abstract
@@ -49,10 +51,12 @@ class ReverseProxyApacheRoute(ApacheRoute,
 
     def __init_subclass__(cls,
                           *,
+                          type: str = "reverse_proxy",
                           target_url: str | None = None,
                           websocket: bool = False,
                           **kwargs):
-        super().__init_subclass__(**kwargs)
+        super().__init_subclass__(type=type,
+                                  **kwargs)
 
         # abstract
         if is_abstract(cls):
@@ -107,9 +111,11 @@ class PhpFilesApacheRoute(StaticFilesApacheRoute,
 
     def __init_subclass__(cls,
                           *,
+                          type: str = "php_files",
                           php_handler: str = "proxy:unix:/run/php/php-fpm.sock|fcgi://localhost/",
                           **kwargs):
-        super().__init_subclass__(**kwargs)
+        super().__init_subclass__(type=type,
+                                  **kwargs)
 
         # abstract
         if is_abstract(cls):

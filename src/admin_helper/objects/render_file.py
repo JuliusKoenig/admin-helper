@@ -12,6 +12,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from admin_helper import __name__ as __module_name__
 from admin_helper.settings import AdminHelperSettings
 from admin_helper.objects.base import BaseObject, is_abstract
+from admin_helper.helper import as_path, raise_is_not_file, raise_is_not_dir, as_str, ensure_path, ensure_parent_path, is_running_in_docker
 
 RenderResult = list[tuple[bool, "RenderFileObject", str]]
 TestResult = list[tuple[bool, "RenderFileObject", str]]
@@ -87,25 +88,13 @@ class RenderFileObject(BaseObject,
         environment = Environment(**environment_options)
 
         # set filter
-        def unix_path(path: str | Path) -> str:
-            if isinstance(path, Path):
-                path = str(path)
-            return path.replace("\\", "/") if platform.system() == "Windows" else path
-
-        environment.filters["unix_path"] = unix_path
-
-        def ensure_path(path: str | Path) -> Path:
-            if isinstance(path, str):
-                path = Path(path)
-            if not path.is_dir():
-                if dry_run:
-                    self.logger.debug(f"[DRY-RUN] Creating directory '{path}' ...")
-                else:
-                    self.logger.debug(f"Creating directory '{path}' ...")
-                    path.mkdir(parents=True, exist_ok=True)
-            return path
-
+        environment.filters["as_path"] = as_path
+        environment.filters["raise_is_not_file"] = raise_is_not_file
+        environment.filters["raise_is_not_dir"] = raise_is_not_dir
+        environment.filters["as_str"] = as_str
         environment.filters["ensure_path"] = ensure_path
+        environment.filters["ensure_parent_path"] = ensure_parent_path
+        environment.filters["is_running_in_docker"] = is_running_in_docker
         return environment
 
     @property

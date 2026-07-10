@@ -1,20 +1,20 @@
 [supervisord]
-pidfile={{ supervisor.pid_file_path.parent.absolute() | ensure_path / supervisor.pid_file_path.name | unix_path }}
+pidfile={{ supervisor.pid_file_path.absolute() | ensure_parent_path | as_str }}
 
 [rpcinterface:supervisor]
 supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
 
 [unix_http_server]
-file = {{ supervisor.socket_file_path.parent.absolute() | ensure_path / supervisor.socket_file_path.name | unix_path }}
+file = {{ supervisor.socket_file_path.absolute() | ensure_parent_path | as_str }}
 chmod = 0770
 chown = {{ user }}:{{ group }}
 
 [supervisorctl]
-serverurl = unix://{{ supervisor.socket_file_path.parent.absolute() | ensure_path / supervisor.socket_file_path.name | unix_path }}
+serverurl = unix://{{ supervisor.socket_file_path.absolute() | ensure_parent_path | as_str }}
 prompt = admin-helper(supervisor)
 
 [eventlistener:log-listener]
-command=python {{ supervisor.log_listener_script_path.absolute() | unix_path }}
+command=python {{ supervisor.log_listener_script_path.absolute() | as_str }}
 events=PROCESS_LOG_STDOUT,PROCESS_LOG_STDERR
 stdout_logfile=NONE
 stderr_logfile=/dev/stderr
