@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, fields
-from typing import Any, TypeVar, cast, dataclass_transform, overload, Literal
+from typing import Any, TypeVar, cast, dataclass_transform, overload, Literal, Sequence
 
 from admin_helper.exceptions import BroadcastException
 from admin_helper.settings import AdminHelperSettings
@@ -273,7 +273,9 @@ class ObjectRegistry:
         visited: set[type[BaseObject]] = set()
 
         def collect(current: type[BaseObject]) -> None:
-            for subclass in current.__subclasses__():
+            subclasses = cast(list[type[BaseObject]], cast(object, current.__subclasses__()))
+
+            for subclass in subclasses:
                 if subclass in visited:
                     continue
 
@@ -835,10 +837,10 @@ def initialize_objects() -> None:
 if __name__ == "__main__":
     initialize_objects()
 
-    apache_1 = object_registry.get_by_name("apache_1", ApacheRoot)
+    apache_1 = object_registry.get_by_name("app.apache_1", ApacheRoot)
     apache_2 = object_registry.get_by_name("apache_2", SecondApacheRoot)
 
-    static_files_1 = object_registry.get_by_name("apache_1.static_files", StaticFilesApacheObject)
+    static_files_1 = object_registry.get_by_name("app.apache_1.static_files", StaticFilesApacheObject)
     static_files_2 = object_registry.get_by_name("apache_2.static_files", StaticFilesApacheObject)
 
     print(apache_1.children)
