@@ -55,10 +55,10 @@ class Supervisor(RenderFileObject,
     @property
     def programs(self) -> dict[str, SupervisorProgram]:
         subfiles = {}
-        for child_name, child in self.children.items():
+        for child in self.root_parent.children_flat:
             if not isinstance(child, SupervisorProgram):
                 continue
-            subfiles[child_name] = child
+            subfiles[child.name] = child
         return subfiles
 
     def start(self) -> None:

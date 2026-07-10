@@ -51,9 +51,9 @@ class Apache(SupervisorProgram, RenderFileObject,
     @property
     def routes(self) -> dict[str, ApacheRoute]:
         routes = {}
-        for child_name, child in self.children.items():
+        for child in self.root_parent.children_flat:
             if isinstance(child, ApacheRoute):
-                routes[child_name] = child
+                routes[child.name] = child
         return routes
 
 
@@ -68,6 +68,6 @@ class TestStaticRoute(StaticFilesApacheRoute,
                       document_root=AdminHelperSettings.var_directory / "www" / "test",
                       auth_required=False):
     ...
-
-
-TestStaticRoute: TestStaticRoute = TestStaticRoute()
+#
+#
+# TestStaticRoute: TestStaticRoute = TestStaticRoute()

@@ -11,6 +11,7 @@ T = TypeVar("T", bound="BaseObject")
 
 BROADCAST_METHODS: list[str] = []
 
+
 def is_abstract(cls: Union["BaseObject", type["BaseObject"], Any]) -> bool:
     return getattr(cls, "_abstract", False)
 
@@ -157,6 +158,17 @@ class BaseObject(ABC):
         for child in self._children:
             children[child.name] = child
         return children
+
+    @property
+    def children_flat(self) -> list[Union["BaseObject", Any]]:
+        def get_children(children: dict[str, Union["BaseObject", Any]]):
+            result = []
+            for child in children.values():
+                result.append(child)
+                result.extend(get_children(child.children))
+            return result
+
+        return get_children(self.children)
 
     def add_child(self,
                   obj: T | type[T],
