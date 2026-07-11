@@ -27,7 +27,7 @@ from collections import Counter
 from threading import RLock
 
 from abc import ABC
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import MISSING, Field, dataclass, field, fields, replace
@@ -57,6 +57,9 @@ __all__ = [
     "BaseObject",
     "DuplicateObjectNameError",
     "DuplicateRegistrationNameError",
+    "DEFAULT_EMPTY_FIELD_VALUES",
+    "MASKED_FIELD_VALUE",
+    "NOT_SET_FIELD_VALUE",
     "display_field",
     "internal_field",
     "masked_field",
@@ -119,9 +122,22 @@ _FIELD_FROZEN = "frozen"
 _FIELD_INTERNAL = "internal"
 _FIELD_MASKED = "masked"
 _FIELD_DISPLAY = "display"
+_FIELD_EMPTY_VALUES = "empty_values"
 
-_MASKED_VALUE = "***"
-_UNSET_MASKED_VALUE = "<not set>"
+# Public presentation defaults used by every masked field unless a field adds
+# further empty values through ``masked_field(empty_values=...)``.
+MASKED_FIELD_VALUE = "<MASKED>"
+NOT_SET_FIELD_VALUE = "<NOT SET>"
+DEFAULT_EMPTY_FIELD_VALUES: tuple[Any, ...] = (
+    None,
+    "",
+    b"",
+    (),
+    [],
+    {},
+    set(),
+    frozenset(),
+)
 
 
 def _build_object_field(*,
@@ -136,6 +152,7 @@ def _build_object_field(*,
                         internal: bool = False,
                         masked: bool = False,
                         display: bool = False,
+                        empty_values: Iterable[Any] = (),
                         metadata: Mapping[str, Any] | None = None) -> Field[Any]:
     """
     Build one dataclass field with framework metadata.
@@ -176,6 +193,9 @@ def _build_object_field(*,
     :param display:
         Whether the field adds useful information to ``BaseObject.__str__``.
 
+    :param empty_values:
+        Additional field-specific values treated as not set when masked.
+
     :param metadata:
         Additional metadata merged with the framework metadata.
 
@@ -190,7 +210,8 @@ def _build_object_field(*,
     field_metadata.update({_FIELD_FROZEN: frozen,
                            _FIELD_INTERNAL: internal,
                            _FIELD_MASKED: masked,
-                           _FIELD_DISPLAY: display})
+                           _FIELD_DISPLAY: display,
+                           _FIELD_EMPTY_VALUES: tuple(empty_values)})
 
     # A masked value must never be exposed by the generated dataclass repr.
     if masked:
@@ -217,6 +238,7 @@ def object_field(*,
                  frozen: bool = False,
                  masked: bool = False,
                  display: bool = False,
+                 empty_values: Iterable[Any] = (),
                  metadata: Mapping[str, Any] | None = None) -> Field[Any]:
     """
     Define a normal public workload field.
@@ -259,6 +281,9 @@ def object_field(*,
     :param display:
         Whether the value is included in ``BaseObject.__str__``.
 
+    :param empty_values:
+        Additional values treated as not set when ``masked=True``.
+
     :param metadata:
         Additional metadata attached to the dataclass field.
 
@@ -276,6 +301,7 @@ def object_field(*,
                                frozen=frozen,
                                masked=masked,
                                display=display,
+                               empty_values=empty_values,
                                metadata=metadata)
 
 
@@ -289,6 +315,7 @@ def read_only_field(*,
                     kw_only: bool | Any = MISSING,
                     masked: bool = False,
                     display: bool = False,
+                    empty_values: Iterable[Any] = (),
                     metadata: Mapping[str, Any] | None = None) -> Field[Any]:
     """
     Define a public field that becomes read-only after initialization.
@@ -325,6 +352,9 @@ def read_only_field(*,
     :param display:
         Whether the value is included in ``BaseObject.__str__``.
 
+    :param empty_values:
+        Additional values treated as not set when ``masked=True``.
+
     :param metadata:
         Additional metadata attached to the dataclass field.
 
@@ -342,6 +372,7 @@ def read_only_field(*,
                                frozen=True,
                                masked=masked,
                                display=display,
+                               empty_values=empty_values,
                                metadata=metadata)
 
 
@@ -449,12 +480,13 @@ def masked_field(*,
                  kw_only: bool | Any = MISSING,
                  frozen: bool = False,
                  display: bool = True,
+                 empty_values: Iterable[Any] = (),
                  metadata: Mapping[str, Any] | None = None) -> Field[Any]:
     """
     Define a sensitive workload field that is masked in all framework output.
 
-    A set value appears as ``***`` in ``BaseObject.__str__``. Empty values,
-    ``None``, and empty collections appear as ``<not set>``. The generated
+    A set value appears as ``<MASKED>`` in ``BaseObject.__str__``. Values
+    considered empty appear as ``<NOT SET>``. The generated
     dataclass representation always excludes the raw value.
 
     Examples:
@@ -486,6 +518,9 @@ def masked_field(*,
     :param display:
         Whether the masked set-state is included in ``BaseObject.__str__``.
 
+    :param empty_values:
+        Additional values treated as not set for this specific field.
+
     :param metadata:
         Additional metadata attached to the dataclass field.
 
@@ -503,6 +538,7 @@ def masked_field(*,
                                frozen=frozen,
                                masked=True,
                                display=display,
+                               empty_values=empty_values,
                                metadata=metadata)
 
 
@@ -553,7 +589,7 @@ class _SensitiveValueRegistry:
                             key=len,
                             reverse=True)
         for token in tokens:
-            value = value.replace(token, _MASKED_VALUE)
+            value = value.replace(token, MASKED_FIELD_VALUE)
         return value
 
     def sanitize(self,
@@ -563,12 +599,12 @@ class _SensitiveValueRegistry:
 
         if isinstance(value, str):
             if value in tokens:
-                return _MASKED_VALUE
+                return MASKED_FIELD_VALUE
             return self.redact_text(value)
         if isinstance(value, bytes):
             decoded = value.decode(errors="replace")
             if decoded in tokens:
-                return _MASKED_VALUE.encode()
+                return MASKED_FIELD_VALUE.encode()
             return self.redact_text(decoded).encode()
         if isinstance(value, tuple):
             return tuple(self.sanitize(item) for item in value)
@@ -578,7 +614,7 @@ class _SensitiveValueRegistry:
             return {self.sanitize(key): self.sanitize(item)
                     for key, item in value.items()}
         if str(value) in tokens:
-            return _MASKED_VALUE
+            return MASKED_FIELD_VALUE
         return value
 
 
@@ -604,19 +640,37 @@ class _MaskedValueFilter(logging.Filter):
 _masked_value_filter = _MaskedValueFilter()
 
 
-def _masked_value_is_set(value: Any) -> bool:
-    if value is None:
+def _values_equal(value: Any,
+                  candidate: Any) -> bool:
+    """Return whether two potential empty values are safely equivalent."""
+
+    if type(value) is not type(candidate):
         return False
-    if isinstance(value, (str, bytes, tuple, list, dict, set, frozenset)):
-        return bool(value)
-    return True
+
+    try:
+        result = value == candidate
+    except Exception:
+        return value is candidate
+
+    return result if isinstance(result, bool) else value is candidate
+
+
+def _masked_value_is_set(value: Any,
+                         empty_values: Iterable[Any] = ()) -> bool:
+    """Return whether a masked field contains a meaningful value."""
+
+    candidates = (*DEFAULT_EMPTY_FIELD_VALUES, *tuple(empty_values))
+    return not any(_values_equal(value, candidate) for candidate in candidates)
 
 
 def _format_display_value(value: Any,
                           *,
-                          masked: bool = False) -> str:
+                          masked: bool = False,
+                          empty_values: Iterable[Any] = ()) -> str:
     if masked:
-        return _MASKED_VALUE if _masked_value_is_set(value) else _UNSET_MASKED_VALUE
+        return (MASKED_FIELD_VALUE
+                if _masked_value_is_set(value, empty_values)
+                else NOT_SET_FIELD_VALUE)
     return _format_log_value(value)
 
 
@@ -3287,6 +3341,7 @@ class BaseObject(ABC):
             formatted_value = _format_display_value(
                 value,
                 masked=dataclass_field.metadata.get(_FIELD_MASKED, False),
+                empty_values=dataclass_field.metadata.get(_FIELD_EMPTY_VALUES, ()),
             )
             parts.append(f"{dataclass_field.name}={formatted_value}")
 
@@ -3802,6 +3857,19 @@ def _default_object_name(cls: type[BaseObject]) -> str:
     return re.sub(r"(?<!^)(?=[A-Z])", "_", cls.__name__).lower()
 
 
+def _validate_framework_field_names(cls: type[BaseObject]) -> None:
+    """Validate naming conventions required by framework field categories."""
+
+    for dataclass_field in fields(cls):
+        if (dataclass_field.metadata.get(_FIELD_INTERNAL, False)
+                and not dataclass_field.name.startswith("_")):
+            raise TypeError(
+                f"Internal field '{dataclass_field.name}' on "
+                f"'{cls.__module__}.{cls.__qualname__}' must start with an underscore."
+            )
+
+
+
 @overload
 def register(*,
              abstract: Literal[True],
@@ -3919,6 +3987,7 @@ def register(*,
         # Apply the runtime dataclass transformation, then record its delayed
         # construction metadata in the singleton registry.
         dataclass_cls = dataclass(cls)
+        _validate_framework_field_names(dataclass_cls)
         return object_registry._register(name=name or _default_object_name(dataclass_cls),
                                          cls=dataclass_cls,
                                          abstract=abstract,
@@ -3930,7 +3999,7 @@ def register(*,
 
 
 # ---------------------------------------------------------------------------
-# Example object definitions
+# Generic example object definitions
 # ---------------------------------------------------------------------------
 
 # Registration messages are emitted before object instances and their handlers
@@ -3945,6 +4014,7 @@ def _configure_example_bootstrap_logging() -> None:
     :return:
         Returns None.
     """
+
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
 
@@ -3964,8 +4034,6 @@ def _configure_example_bootstrap_logging() -> None:
     root_logger.addHandler(console_handler)
 
 
-# Create the directory before handler construction. ObjectLoggerConfig never
-# creates directories implicitly because a misspelled path should fail loudly.
 _EXAMPLE_LOG_DIRECTORY = Path("logs")
 _EXAMPLE_LOG_DIRECTORY.mkdir(parents=True,
                              exist_ok=True)
@@ -3973,107 +4041,127 @@ _EXAMPLE_LOG_DIRECTORY.mkdir(parents=True,
 _configure_example_bootstrap_logging()
 
 
-class ApacheObjectLogger(ObjectLogger):
-    """Example custom logger class accepted by ObjectLoggerConfig."""
+class WorkerObjectLogger(ObjectLogger):
+    """Example custom logger used by one concrete service object."""
 
-    def apache_event(self,
-                     message: str,
-                     *args: Any,
-                     **context_values: Any) -> None:
+    def task_event(self,
+                   message: str,
+                   *args: Any,
+                   **context_values: Any) -> None:
         """
-        Emit an Apache-specific log entry inside the apache.event context.
+        Emit a worker-specific message inside the ``task.event`` context.
 
         :param message:
-            The 'message' value used by the operation.
+            The log message format string.
 
         :param args:
-            The positional constructor arguments stored for delayed creation.
+            Positional values interpolated into the message.
 
         :param context_values:
-            The 'context_values' value used by the operation.
+            Additional values exposed through the logging context.
 
         :return:
             Returns None.
         """
-        with self.context("apache.event", **context_values):
+
+        with self.context("task.event", **context_values):
             self.info(message, *args)
 
 
-@register(abstract=True,
-          name="apache_object")
-class ApacheObject(BaseObject):
-    enabled: bool
-
-
-@register(name="static_files",
-          parent=ApacheObject,
-          kwargs={"enabled": True,
-                  "url_path": "/static",
-                  "directory": "/var/www/static"})
-class StaticFilesApacheObject(ApacheObject):
-    url_path: str
-    directory: str
-
-
-@register(name="reverse_proxy",
-          parent=ApacheObject,
-          kwargs={"enabled": True,
-                  "source": "/api",
-                  "target": "http://127.0.0.1:8000"})
-class ReverseProxyApacheObject(ApacheObject):
-    source: str
-    target: str
-
-
-@register(name="app",
+@register(name="application",
           kwargs={"logger_config": ObjectLoggerConfig(parent=LoggerParent.NONE,
-                                                      level=logging.WARNING,
+                                                      level=logging.DEBUG,
                                                       console=True,
-                                                      # console_level=logging.DEBUG,
                                                       console_format=(
                                                               "[%(object_status)s] "
                                                               "[%(log_context)s] "
                                                               "%(message)s"
                                                       ),
-                                                      file=False,
-                                                      # file_level=logging.DEBUG,
-                                                      file_format=(
-                                                              "%(asctime)s "
-                                                              "[%(levelname)s] "
-                                                              "[%(object_status)s] "
-                                                              "[%(log_context)s] "
-                                                              "%(name)s: %(message)s "
-                                                              "| %(log_context_data)s"
-                                                      ),
-                                                      file_max_bytes=1_000_000,
-                                                      file_backup_count=3,
-                                                      file_archive_backup_count=2,
-                                                      contexts=ObjectLoggerContexts({#"object.move": LoggerContextLevels(level=logging.DEBUG),
-                                                          "logger.reconfigure": LoggerContextLevels(level=logging.DEBUG),
-                                                          # "broadcast": LoggerContextLevels(level=logging.DEBUG,
-                                                          #                                  console_level=logging.WARNING,
-                                                          #                                  file_level=logging.DEBUG),
-                                                          "apache.event": LoggerContextLevels(level=logging.INFO)}))})
-class App(BaseObject):
-    ...
+                                                      file=True,
+                                                      file_path=_EXAMPLE_LOG_DIRECTORY / "application.log",
+                                                      file_level=logging.DEBUG,
+                                                      contexts=ObjectLoggerContexts({
+                                                          "task.event": LoggerContextLevels(
+                                                              level=logging.INFO
+                                                          )
+                                                      }))})
+class Application(BaseObject):
+    """Root object using the central console and application log file."""
+
+    environment: str = display_field(default="development",
+                                     frozen=True)
 
 
-@register(name="apache_1",
-          parent=App,
-          kwargs={"enabled": True,
-                  "config_file": "/etc/apache2/httpd.conf"})
-class ApacheRoot(ApacheObject):
-    config_file: str
+@register(name="database",
+          parent=Application,
+          kwargs={"host": "database.example.org",
+                  "port": 5432,
+                  "username": "admin",
+                  "password": "super-secret-password",
+                  "optional_token": None})
+class DatabaseService(BaseObject):
+    """Service demonstrating display, masked, read-only, and internal fields."""
+
+    host: str = display_field()
+    port: int = display_field()
+    username: str = display_field()
+    password: str = masked_field()
+    optional_token: str | None = masked_field(default=None,
+                                              empty_values=("unset", "disabled"))
+    service_id: str = read_only_field(default="database-primary",
+                                      display=True)
+    _connection_attempts: int = internal_field(default=0)
+
+    def connect(self) -> None:
+        """Log one example operation without exposing the password."""
+
+        self._connection_attempts += 1
+        self.logger.info("Connecting %s to '%s:%d'.",
+                         self,
+                         self.host,
+                         self.port)
 
 
-@register(name="apache_2",
-          parent=App,
-          kwargs={"enabled": False,
-                  "config_file": "/tmp/apache2.conf",
-                  "logger_config": ObjectLoggerConfig(logger_class=ApacheObjectLogger,
-                                                      file=True)})
-class SecondApacheRoot(ApacheObject):
-    config_file: str
+@register(name="worker",
+          parent=Application,
+          kwargs={"queue": "default",
+                  "access_token": "worker-access-token",
+                  "logger_config": ObjectLoggerConfig(logger_class=WorkerObjectLogger,
+                                                      file=True,
+                                                      file_path=_EXAMPLE_LOG_DIRECTORY / "worker.log",
+                                                      contexts=ObjectLoggerContexts({
+                                                          "task.event": LoggerContextLevels(
+                                                              level=logging.DEBUG,
+                                                              console_level=logging.INFO,
+                                                              file_level=logging.DEBUG
+                                                          )
+                                                      }))})
+class WorkerService(BaseObject):
+    """Service using a dedicated logger class and an additional file handler."""
+
+    queue: str = display_field()
+    access_token: str = masked_field()
+    _processed_tasks: int = internal_field(default=0)
+
+    def process_task(self,
+                     task_name: str) -> None:
+        """
+        Process one example task and emit a contextual logger message.
+
+        :param task_name:
+            The human-readable task name.
+
+        :return:
+            Returns None.
+        """
+
+        self._processed_tasks += 1
+        if isinstance(self.logger, WorkerObjectLogger):
+            self.logger.task_event("Processing task '%s' with %s.",
+                                   task_name,
+                                   self,
+                                   task_name=task_name,
+                                   processed_tasks=self._processed_tasks)
 
 
 # ---------------------------------------------------------------------------
@@ -4091,69 +4179,52 @@ def initialize_objects() -> None:
     :return:
         Returns None.
     """
+
     object_registry.instantiate_all()
 
 
 if __name__ == "__main__":
     initialize_objects()
 
-    apache_1 = object_registry.get_by_name("app.apache_1", ApacheRoot)
-    apache_2 = object_registry.get_by_name("apache_2", SecondApacheRoot)
+    application = object_registry.get_by_name("application", Application)
+    database = object_registry.get_by_name("database", DatabaseService)
+    worker = object_registry.get_by_name("worker", WorkerService)
 
-    static_files_1_a = object_registry.get_by_name("app.apache_1.static_files", StaticFilesApacheObject)
-    static_files_2_a = object_registry.get_by_name("apache_2.static_files", StaticFilesApacheObject)
+    # ``display_field`` values appear in the concise object representation.
+    # ``masked_field`` values only reveal whether they are set.
+    print(application)
+    print(database)
+    print(worker)
 
-    static_files_1_b = apache_1.get_child_by_name("static_files", StaticFilesApacheObject)
-    static_files_2_b = apache_2.get_child_by_name("static_files", StaticFilesApacheObject)
+    # Expected output resembles:
+    # Application(name='application', environment='development')
+    # DatabaseService(name='application.database', host='database.example.org',
+    #                 port=5432, username='admin', password=<MASKED>,
+    #                 optional_token=<NOT SET>, service_id='database-primary')
+    # WorkerService(name='application.worker', queue='default',
+    #               access_token=<MASKED>)
 
-    static_files_1_c = object_registry.find_by_name("app.*.static_files", StaticFilesApacheObject)
-    static_files_2_c = object_registry.find_by_name("**.static_files", StaticFilesApacheObject)
+    database.connect()
+    worker.process_task("refresh-cache")
 
-    # All of these messages reach the App console and application.log because
-    # the child loggers follow their parent by default.
-    apache_1.logger.debug("Apache 1 emitted a debug message through the central logger configuration.")
-    static_files_1_a.logger.info("The static-files object emitted an informational message through the central logger configuration.")
+    # The defensive masking filter also protects accidental direct logging.
+    database.logger.warning("The configured password is '%s'.",
+                            database.password)
 
-    # apache_2 additionally writes to logs/apache_2.log through its local file
-    # handler, while propagation still forwards the same record to App.
-    apache_2.logger.warning("Apache 2 emitted a warning that was written centrally and to its dedicated file.")
+    # ``internal_field`` is framework/private state. It is intentionally absent
+    # from the generated constructor, dataclass repr, and BaseObject.__str__.
+    # Internal field names must start with an underscore; @register validates
+    # this convention. Python still allows deliberate access to the attribute,
+    # but the underscore marks it as unsupported external API.
+    # print(database._connection_attempts)
 
-    # apache_2 uses the custom logger class configured at registration time.
-    if isinstance(apache_2.logger, ApacheObjectLogger):
-        apache_2.logger.apache_event("Custom ApacheObjectLogger method called for %s",
-                                     apache_2.name,
-                                     event="configuration-check")
+    # ``read_only_field`` accepts its initial value but rejects reassignment
+    # after initialization. Uncomment this line to see the protection:
+    # database.service_id = "replacement-id"
 
-    # Arbitrary future phases do not require an enum change. Context names and
-    # values are dynamically scoped and become available to every formatter.
-    with apache_1.logging_context("apache.virtual_host.reload",
-                                  virtual_host="example.org",
-                                  config_file=apache_1.config_file):
-        apache_1.logger.info("Reloading the virtual-host configuration.")
-
-    # Every attribute can be changed dynamically. Setting a value to INHERIT
-    # removes the local override and restores inheritance from the parent config.
-    static_files_2_a.logger_config.file = True
-    static_files_2_a.logger.info("This object now writes to 'logs/app.apache_2.static_files.log'.")
-    static_files_2_a.logger_config.file = LoggerConfigValue.INHERIT
-
-    # The real logging parent can be selected independently from config inheritance.
-    apache_2.logger_config.parent = LoggerParent.ROOT
-    apache_2.logger.warning("This message now propagates directly to the root logger.")
-    apache_2.logger_config.parent = LoggerParent.OBJECT_PARENT
-
-    # Context policy is configured from outside the business operation. Normal
-    # messages require WARNING, while the broadcast context permits DEBUG in the
-    # file and WARNING on the console.
-    apache_2.logger_config.level = logging.WARNING
-    apache_2.logger_config.contexts.configure("broadcast",
-                                              level=logging.DEBUG,
-                                              console_level=logging.WARNING,
-                                              file_level=logging.DEBUG)
-
-    # A context has a deterministic state. ``inherit`` keeps the entry defined,
-    # while ``remove`` returns it to the UNDEFINED state.
-    apache_2.logger_config.contexts.inherit("broadcast")
-    apache_2.logger_config.contexts.remove("broadcast")
+    # Field-specific empty values augment the global defaults. Here both
+    # ``'unset'`` and ``'disabled'`` would be represented as <NOT SET>.
+    database.optional_token = "unset"
+    print(database)
 
     print()
