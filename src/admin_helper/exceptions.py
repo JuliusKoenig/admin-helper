@@ -13,6 +13,47 @@ class AdminHelperException(Exception):
 class OperatingSystemNotSupportedException(AdminHelperException):
     """Raised when the current operating system is not supported."""
 
+class RegistryError(RuntimeError):
+    """
+    Base exception for registry definition, validation, and build errors.
+    """
+
+
+class DuplicateRegistrationNameError(RegistryError):
+    """
+    Raised when two class definitions use the same registration name.
+    """
+
+
+class DuplicateObjectNameError(RegistryError):
+    """
+    Raised when two instantiated nodes would receive the same full path.
+    """
+
+
+class AmbiguousObjectNameError(RegistryError):
+    """
+    Raised when a shortened object path identifies multiple instances.
+    """
+
+
+class UnregisteredSubclassError(RegistryError):
+    """
+    Raised when a loaded BaseObject subclass was not decorated.
+    """
+
+
+class ParentResolutionError(RegistryError):
+    """
+    Raised when a configured parent reference cannot be resolved.
+    """
+
+
+class ObjectTreeLoopError(RegistryError):
+    """
+    Raised when a registration or runtime parent relationship forms a cycle.
+    """
+
 
 class LoggerConfigurationError(AdminHelperException):
     """Raised when an object-logger configuration is invalid."""

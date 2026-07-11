@@ -36,8 +36,15 @@ from rich.logging import RichHandler
 
 from admin_helper.console import AdminHelperConsole
 from admin_helper.exceptions import (
+    AmbiguousObjectNameError,
     BroadcastException,
+    DuplicateObjectNameError,
+    DuplicateRegistrationNameError,
     LoggerConfigurationError,
+    ObjectTreeLoopError,
+    ParentResolutionError,
+    RegistryError,
+    UnregisteredSubclassError,
 )
 from admin_helper.settings import AdminHelperSettings
 
@@ -48,6 +55,7 @@ __all__ = [
     "DuplicateRegistrationNameError",
     "ObjectLogger",
     "ObjectLoggerConfig",
+    "ObjectStatus",
     "LoggerConfigValue",
     "LoggerParent",
     "LoggerConfigurationError",
@@ -55,12 +63,10 @@ __all__ = [
     "ParentResolutionError",
     "RegistryError",
     "UnregisteredSubclassError",
-    "initialize_objects",
     "is_abstract",
     "object_registry",
     "register",
 ]
-
 
 # Generic type variable used to preserve concrete BaseObject subclasses in the
 # public lookup, child-access, and decorator APIs.
@@ -100,6 +106,38 @@ class LoggerParent(Enum):
     OBJECT_PARENT = "object_parent"
     ROOT = "root"
     NONE = "none"
+
+
+class ObjectStatus(Enum):
+    """
+    Read-only lifecycle state exposed by every ``BaseObject``.
+
+    The framework changes this value only while it performs a defined operation.
+    User code can inspect ``obj.status`` but cannot assign a new state directly.
+    """
+
+    INITIALIZING = "initializing"
+    READY = "ready"
+    RECONFIGURING = "reconfiguring"
+    MOVING = "moving"
+    BROADCASTING = "broadcasting"
+
+
+@dataclass(frozen=True, slots=True)
+class _LoggerContextFrame:
+    """One dynamically scoped logging context frame."""
+
+    name: str
+    values: Mapping[str, Any]
+
+
+# ContextVar keeps nested logging contexts isolated between threads and async
+# tasks while still allowing records emitted by child loggers to see the same
+# active operation context.
+_logger_context_stack: ContextVar[tuple[_LoggerContextFrame, ...]] = ContextVar(
+    "object_logger_context_stack",
+    default=(),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,7 +323,7 @@ class ObjectLoggerConfig:
                                            formatter=None,
                                            console=False,
                                            console_level=None,
-                                           console_format="%(message)s",
+                                           console_format="[%(object_status)s] [%(log_context)s] %(message)s",
                                            console_rich_show_time=True,
                                            console_rich_markup=True,
                                            console_rich_show_level=True,
@@ -294,7 +332,7 @@ class ObjectLoggerConfig:
                                            file_path="logs/{name}.log",
                                            file_mode="a",
                                            file_level=None,
-                                           file_format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                                           file_format="%(asctime)s [%(levelname)s] [%(object_status)s] [%(log_context)s] %(name)s: %(message)s | %(log_context_data)s",
                                            file_max_bytes=0,
                                            file_backup_count=0,
                                            file_encoding="utf-8",
@@ -361,8 +399,11 @@ class ObjectLogger(logging.Logger):
 
         def format(self,
                    record: logging.LogRecord) -> str:
-            if hasattr(record, "markup"):
-                return str(record.msg)
+            # A plain message-only format keeps the historic Rich-markup behavior.
+            # Context-aware formats still pass through logging.Formatter normally.
+            if (hasattr(record, "markup")
+                    and getattr(self._style, "_fmt", None) == "%(message)s"):
+                return record.getMessage()
             return super().format(record)
 
     class TarRotatingFileHandler(RotatingFileHandler):
@@ -424,6 +465,69 @@ class ObjectLogger(logging.Logger):
                          level=level)
         self._managed_handlers: list[logging.Handler] = []
         self._resolved_config: _ResolvedObjectLoggerConfig | None = None
+        self._status_provider: Callable[[], ObjectStatus | str] | None = None
+
+    def _bind_status_provider(self,
+                              provider: Callable[[], ObjectStatus | str]) -> None:
+        """Bind the owning object's read-only lifecycle status to log records."""
+
+        self._status_provider = provider
+
+    @contextmanager
+    def context(self,
+                name: str,
+                **values: Any) -> Iterator[ObjectLogger]:
+        """
+        Add a dynamic, nestable context to every record emitted in this scope.
+
+        The context is execution-local through ``ContextVar`` and therefore safe
+        for concurrent threads and asynchronous tasks. Formatters may use
+        ``%(log_context)s``, ``%(log_context_data)s``, ``%(log_context_depth)d``
+        and ``%(object_status)s``.
+
+        Example::
+
+            with obj.logger.context("apache.reload", virtual_host="example.org"):
+                obj.logger.info("Reloading configuration")
+        """
+
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise LoggerConfigurationError("Logging context name cannot be empty.")
+
+        frame = _LoggerContextFrame(name=normalized_name,
+                                    values=dict(values))
+        stack = _logger_context_stack.get()
+        token = _logger_context_stack.set((*stack, frame))
+        try:
+            yield self
+        finally:
+            _logger_context_stack.reset(token)
+
+    def makeRecord(self,
+                   *args: Any,
+                   **kwargs: Any) -> logging.LogRecord:
+        """Create a record and inject object status plus active context metadata."""
+
+        record = super().makeRecord(*args, **kwargs)
+        stack = _logger_context_stack.get()
+
+        context_values: dict[str, Any] = {}
+        for frame in stack:
+            context_values.update(frame.values)
+
+        status: ObjectStatus | str = ObjectStatus.READY
+        if self._status_provider is not None:
+            status = self._status_provider()
+
+        record.object_status = status.value if isinstance(status, ObjectStatus) else str(status)
+        record.log_context = ".".join(frame.name for frame in stack) if stack else "-"
+        record.log_context_depth = len(stack)
+        record.log_context_values = context_values
+        record.log_context_data = ", ".join(f"{key}={value!r}"
+                                            for key, value in context_values.items()) or "-"
+
+        return record
 
     def configure(self,
                   config: _ResolvedObjectLoggerConfig,
@@ -529,51 +633,8 @@ def _get_object_logger(name: str,
     return logger
 
 
-# ---------------------------------------------------------------------------
-# Public exceptions
-# ---------------------------------------------------------------------------
-
-class RegistryError(RuntimeError):
-    """
-    Base exception for registry definition, validation, and build errors.
-    """
-
-
-class DuplicateRegistrationNameError(RegistryError):
-    """
-    Raised when two class definitions use the same registration name.
-    """
-
-
-class DuplicateObjectNameError(RegistryError):
-    """
-    Raised when two instantiated nodes would receive the same full path.
-    """
-
-
-class AmbiguousObjectNameError(RegistryError):
-    """
-    Raised when a shortened object path identifies multiple instances.
-    """
-
-
-class UnregisteredSubclassError(RegistryError):
-    """
-    Raised when a loaded BaseObject subclass was not decorated.
-    """
-
-
-class ParentResolutionError(RegistryError):
-    """
-    Raised when a configured parent reference cannot be resolved.
-    """
-
-
-class ObjectTreeLoopError(RegistryError):
-    """
-    Raised when a registration or runtime parent relationship forms a cycle.
-    """
-
+# Registry and logger exceptions live in ``admin_helper.exceptions`` so every
+# subsystem imports the same hierarchy without creating duplicate exception types.
 
 
 # ---------------------------------------------------------------------------
@@ -624,7 +685,6 @@ class _ConstructionContext:
 # The context variable prevents constructor metadata from becoming public
 # dataclass parameters and remains safe across threads and asynchronous tasks.
 _construction_context: ContextVar[_ConstructionContext | None] = ContextVar("base_object_construction_context", default=None)
-
 
 
 # ---------------------------------------------------------------------------
@@ -1358,86 +1418,73 @@ class _ObjectRegistry:
     def _attach_child(self,
                       parent: BaseObject,
                       child: _T) -> _T:
-        """
-        Attach or move a child object while preserving registry consistency.
+        """Attach or move a child while preserving tree, index, and logger state."""
 
-        The method rejects cycles, removes the object from its previous parent, checks
-        all renamed subtree paths for collisions, updates the full names of the child
-        and every descendant, refreshes all search indexes, and finally links the child
-        to the new parent.
+        old_parent_name = child.parent.name if child.parent is not None else None
+        previous_status = child._status
+        object.__setattr__(child, "_status", ObjectStatus.MOVING)
 
-        It is private because directly moving tree nodes is a privileged operation;
-        callers should use ``BaseObject.add_child``.
+        try:
+            with child.logger.context("object.move",
+                                      object_name=child.name,
+                                      old_parent=old_parent_name,
+                                      new_parent=parent.name):
+                # Reject self-parenting and moves that would create a cycle.
+                if parent is child:
+                    raise ObjectTreeLoopError(f"{child.name!r} cannot be its own parent.")
+                current: BaseObject | None = parent
+                while current is not None:
+                    if current is child:
+                        raise ObjectTreeLoopError(f"Attaching {child.name!r} below {parent.name!r} would create a parent loop.")
+                    current = current.parent
+                if child.parent is parent and child in parent._children:
+                    child.logger.debug("Object %s is already attached to parent %s", child.name, parent.name)
+                    return child
 
-        :param parent: The parent object.
-        :param child: The child object.
-        :return: The new child object.
-        """
+                child.logger.debug("Preparing to move object %s below parent %s", child.name, parent.name)
 
-        # Reject self-parenting and any move that would place an ancestor below
-        # one of its own descendants.
-        if parent is child:
-            raise ObjectTreeLoopError(f"{child.name!r} cannot be its own parent.")
-        current: BaseObject | None = parent
-        while current is not None:
-            if current is child:
-                raise ObjectTreeLoopError(f"Attaching {child.name!r} below {parent.name!r} would create a parent loop.")
-            current = current.parent
-        if child.parent is parent and child in parent._children:
-            child.logger.debug("Object %s is already attached to parent %s", child.name, parent.name)
-            return child
+                # Detach only after the target relationship is proven safe.
+                old_parent = child.parent
+                if old_parent is not None and child in old_parent._children:
+                    old_parent._children.remove(child)
+                old_name = child.name
+                new_name = f"{parent.name}.{child.registration_name}"
 
-        child.logger.debug("Preparing to move object %s below parent %s", child.name, parent.name)
+                # Compute and validate every future subtree name transactionally.
+                subtree = (child, *child.children_flat)
+                old_names = {id(instance): instance.name for instance in subtree}
+                new_names = {id(instance): new_name + instance.name[len(old_name):] for instance in subtree}
+                subtree_ids = {id(instance) for instance in subtree}
+                for instance in subtree:
+                    instance_name = new_names[id(instance)]
+                    existing = self._instances_by_name.get(instance_name)
+                    if existing is not None and id(existing) not in subtree_ids:
+                        raise DuplicateObjectNameError(f"Object name {instance_name!r} already exists.")
 
-        # Detach from the previous parent only after the target relationship is
-        # proven cycle-free.
-        old_parent = child.parent
-        if old_parent is not None and child in old_parent._children:
-            old_parent._children.remove(child)
-        old_name = child.name
-        new_name = f"{parent.name}.{child.registration_name}"
+                # Replace names, parent links, registration indexes, and suffix indexes.
+                for instance in subtree:
+                    self._unindex_instance(instance, object_name=old_names[id(instance)])
+                with child._unlocked():
+                    child.parent = parent
+                for instance in subtree:
+                    instance_old_name = old_names[id(instance)]
+                    instance_new_name = new_names[id(instance)]
+                    with instance._unlocked():
+                        instance.name = instance_new_name
+                    registration = self._instance_registrations.get(id(instance))
+                    if registration is not None:
+                        registration.instances.pop(instance_old_name, None)
+                        registration.instances[instance_new_name] = instance
+                    self._index_instance(instance)
+                if child not in parent._children:
+                    parent._children.append(child)
 
-        # Moving one node changes the full path of its entire subtree. Compute
-        # every old and new path before changing state.
-        subtree = (child, *child.children_flat)
-        old_names = {id(instance): instance.name for instance in subtree}
-        new_names = {id(instance): new_name + instance.name[len(old_name):] for instance in subtree}
-        subtree_ids = {id(instance) for instance in subtree}
-
-        # Validate all future names as one transaction before unindexing or
-        # mutating a single object.
-        for instance in subtree:
-            instance_name = new_names[id(instance)]
-            existing = self._instances_by_name.get(instance_name)
-            if existing is not None and id(existing) not in subtree_ids:
-                raise DuplicateObjectNameError(f"Object name {instance_name!r} already exists.")
-
-        # Remove stale search entries, update protected fields under the private
-        # lock override, then rebuild registration and path indexes.
-        for instance in subtree:
-            self._unindex_instance(instance, object_name=old_names[id(instance)])
-        with child._unlocked():
-            child.parent = parent
-        for instance in subtree:
-            instance_old_name = old_names[id(instance)]
-            instance_new_name = new_names[id(instance)]
-            with instance._unlocked():
-                instance.name = instance_new_name
-            registration = self._instance_registrations.get(id(instance))
-            if registration is not None:
-                registration.instances.pop(instance_old_name, None)
-                registration.instances[instance_new_name] = instance
-            self._index_instance(instance)
-        if child not in parent._children:
-            parent._children.append(child)
-
-        # Recreate the explicit logger-parent links for the renamed subtree.
-        # This also moves local handlers and formatter configuration onto the
-        # logger objects associated with the new hierarchical names.
-        child._configure_logger_tree()
-        child.logger.debug("Attached object %s below parent %s", child.name, parent.name)
-
-        return child
+                # Re-resolve inherited logger configs and explicit logger parents.
+                child._configure_logger_tree()
+                child.logger.debug("Attached object %s below parent %s", child.name, parent.name)
+                return child
+        finally:
+            object.__setattr__(child, "_status", previous_status)
 
     @property
     def built(self) -> bool:
@@ -1654,11 +1701,9 @@ class _ObjectRegistry:
         return normalized_name
 
 
-
 # The singleton is the supported entry point for lookups. Creating additional
 # registry instances is intentionally not part of the public API.
 object_registry = _ObjectRegistry()
-
 
 
 # ---------------------------------------------------------------------------
@@ -1707,6 +1752,10 @@ class BaseObject(ABC):
     _initialized: bool = field(default=False,
                                init=False,
                                repr=False)
+    _status: ObjectStatus = field(default=ObjectStatus.INITIALIZING,
+                                  init=False,
+                                  repr=False,
+                                  metadata={"frozen": True})
     _children: list[BaseObject] = field(default_factory=list,
                                         init=False,
                                         repr=False)
@@ -1740,6 +1789,7 @@ class BaseObject(ABC):
         # __setattr__ guard, which is enabled only at the end.
         registration = context.registration
         object.__setattr__(self, "_initialized", False)
+        object.__setattr__(self, "_status", ObjectStatus.INITIALIZING)
         object.__setattr__(self, "name", context.object_name)
         object.__setattr__(self, "parent", context.parent)
         object.__setattr__(self, "_abstract", registration.abstract)
@@ -1767,6 +1817,7 @@ class BaseObject(ABC):
         if self.parent is not None:
             object_registry._attach_child(self.parent, self)
         object.__setattr__(self, "_initialized", True)
+        object.__setattr__(self, "_status", ObjectStatus.READY)
         self.logger.debug("Initialized object %s", self.name)
 
     def __setattr__(self,
@@ -1835,6 +1886,7 @@ class BaseObject(ABC):
             previous_logger.disabled = True
 
         object.__setattr__(self, "logger", logger)
+        logger._bind_status_provider(lambda: self.status)
         logger.configure(config=resolved_config,
                          parent_logger=self._resolve_logger_parent(resolved_config.parent),
                          path_values=self._logger_path_values())
@@ -1869,18 +1921,26 @@ class BaseObject(ABC):
                 "root_name": root_name}
 
     def _configure_logger_tree(self) -> None:
-        """
-        Refresh this logger and every descendant logger.
+        """Refresh this logger and every descendant inside one logging context."""
 
-        Descendant refresh is required after re-parenting because object names
-        and explicit ``logging.Logger.parent`` references may both change.
+        logger = getattr(self, "logger", None)
+        if isinstance(logger, ObjectLogger):
+            with logger.context("logger.reconfigure", object_name=self.name):
+                self._configure_logger_subtree()
+        else:
+            self._configure_logger_subtree()
 
-        :return: None
-        """
+    def _configure_logger_subtree(self) -> None:
+        """Reconfigure this subtree while exposing ``RECONFIGURING`` status."""
 
-        self._configure_logger()
-        for child in self._children:
-            child._configure_logger_tree()
+        previous_status = self._status
+        object.__setattr__(self, "_status", ObjectStatus.RECONFIGURING)
+        try:
+            self._configure_logger()
+            for child in self._children:
+                child._configure_logger_subtree()
+        finally:
+            object.__setattr__(self, "_status", previous_status)
 
     @contextmanager
     def _unlocked(self) -> Iterator[BaseObject]:
@@ -1900,6 +1960,21 @@ class BaseObject(ABC):
             yield self
         finally:
             object.__setattr__(self, "_initialized", previous_state)
+
+    @property
+    def status(self) -> ObjectStatus:
+        """Return the framework-managed lifecycle state of this object."""
+
+        return self._status
+
+    @contextmanager
+    def logging_context(self,
+                        name: str,
+                        **values: Any) -> Iterator[BaseObject]:
+        """Open a dynamic logging context and yield this object for convenience."""
+
+        with self.logger.context(name, **values):
+            yield self
 
     @property
     def registration_name(self) -> str:
@@ -2061,55 +2136,51 @@ class BaseObject(ABC):
                        _wrap_errors: bool = not AdminHelperSettings.debug,
                        _stop_on_error: bool = True,
                        **method_kwargs: Any) -> list[Any]:
-        """
-        Call one method across the child tree.
+        """Call one method across the child tree inside a broadcast context."""
 
-        Each direct child receives the method call when it implements the named
-        method. Otherwise the request is forwarded recursively to that child's
-        children. Errors may be re-raised immediately or wrapped in
-        ``BroadcastException`` according to the supplied flags.
+        previous_status = self._status
+        object.__setattr__(self, "_status", ObjectStatus.BROADCASTING)
+        try:
+            with self.logger.context("broadcast",
+                                     method=_method_name,
+                                     stop_on_error=_stop_on_error,
+                                     wrap_errors=_wrap_errors):
+                self.logger.debug("Broadcasting %s -> %s", self, _method_name)
+                results: list[Any] = []
+                for child in self.children:
+                    method = getattr(child, _method_name, None)
+                    if callable(method):
+                        try:
+                            results.append(method(**method_kwargs))
+                        except Exception as error:
+                            self.logger.error("Error while broadcasting %s -> %s: %s", self, _method_name, error)
+                            if not _wrap_errors:
+                                raise
+                            broadcast_error = BroadcastException(self, _method_name, error)
+                            results.append(broadcast_error)
+                            if _stop_on_error:
+                                broadcast_error.finalize()
+                                raise broadcast_error
+                    else:
+                        results.append(child.broadcast_call(_method_name=_method_name,
+                                                            _wrap_errors=_wrap_errors,
+                                                            _stop_on_error=_stop_on_error,
+                                                            **method_kwargs))
+                if _wrap_errors and not _stop_on_error:
+                    final_exception: BroadcastException | None = None
+                    for broadcast_result in results:
+                        if not isinstance(broadcast_result, BroadcastException):
+                            continue
+                        if final_exception is None:
+                            final_exception = BroadcastException()
+                        final_exception.errors.append(broadcast_result)
+                    if final_exception is not None:
+                        final_exception.finalize()
+                        raise final_exception
 
-        :param _method_name: The name of the method to be called.
-        :param _wrap_errors: Whether or not to wrap errors during broadcasting.
-        :param _stop_on_error: Whether or not to stop broadcasting when an error occurs.
-        :param method_kwargs: Additional keyword arguments to be passed to the method.
-        :return: The broadcasted results.
-        """
-
-        # Process direct children in tree order and preserve every return value
-        # for the caller.
-        self.logger.debug("Broadcasting %s -> %s", self, _method_name)
-        results: list[Any] = []
-        for child in self.children:
-            method = getattr(child, _method_name, None)
-            if callable(method):
-                try:
-                    results.append(method(**method_kwargs))
-                except Exception as error:
-                    self.logger.error("Error while broadcasting %s -> %s: %s", self, _method_name, error)
-                    if not _wrap_errors:
-                        raise
-                    broadcast_error = BroadcastException(self, _method_name, error)
-                    results.append(broadcast_error)
-                    if _stop_on_error:
-                        broadcast_error.finalize()
-                        raise broadcast_error
-            else:
-                results.append(child.broadcast_call(_method_name=_method_name, _wrap_errors=_wrap_errors, _stop_on_error=_stop_on_error, **method_kwargs))
-        if _wrap_errors and not _stop_on_error:
-            final_exception: BroadcastException | None = None
-            for broadcast_result in results:
-                if not isinstance(broadcast_result, BroadcastException):
-                    continue
-                if final_exception is None:
-                    final_exception = BroadcastException()
-                final_exception.errors.append(broadcast_result)
-            if final_exception is not None:
-                final_exception.finalize()
-                raise final_exception
-
-        return results
-
+                return results
+        finally:
+            object.__setattr__(self, "_status", previous_status)
 
 
 # ---------------------------------------------------------------------------
@@ -2254,7 +2325,6 @@ def register(*,
     return decorator
 
 
-
 # ---------------------------------------------------------------------------
 # Example object definitions
 # ---------------------------------------------------------------------------
@@ -2291,13 +2361,16 @@ _EXAMPLE_LOG_DIRECTORY.mkdir(parents=True,
 
 _configure_example_bootstrap_logging()
 
+
 class ApacheObjectLogger(ObjectLogger):
     """Example custom logger class accepted by ObjectLoggerConfig."""
 
     def apache_event(self,
                      message: str,
-                     *args: Any) -> None:
-        self.info("[apache] " + message, *args)
+                     *args: Any,
+                     **context_values: Any) -> None:
+        with self.context("apache.event", **context_values):
+            self.info(message, *args)
 
 
 # The root object defines the initial effective profile. Descendants inherit
@@ -2308,10 +2381,21 @@ _APP_LOGGER_CONFIG = ObjectLoggerConfig(parent=LoggerParent.NONE,
                                         level=logging.DEBUG,
                                         console=True,
                                         console_level=logging.DEBUG,
-                                        console_format="%(message)s",
+                                        console_format=(
+                                            "[%(object_status)s] "
+                                            "[%(log_context)s] "
+                                            "%(message)s"
+                                        ),
                                         file=False,
                                         file_level=logging.DEBUG,
-                                        file_format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                                        file_format=(
+                                            "%(asctime)s "
+                                            "[%(levelname)s] "
+                                            "[%(object_status)s] "
+                                            "[%(log_context)s] "
+                                            "%(name)s: %(message)s "
+                                            "| %(log_context_data)s"
+                                        ),
                                         file_max_bytes=1_000_000,
                                         file_backup_count=3,
                                         file_archive_backup_count=2)
@@ -2321,6 +2405,7 @@ _APP_LOGGER_CONFIG = ObjectLoggerConfig(parent=LoggerParent.NONE,
 # template ``logs/{name}.log`` and therefore creates logs/app.apache_2.log.
 _APACHE_2_LOGGER_CONFIG = ObjectLoggerConfig(logger_class=ApacheObjectLogger,
                                              file=True)
+
 
 @register(abstract=True,
           name="apache_object")
@@ -2371,26 +2456,14 @@ class SecondApacheRoot(ApacheObject):
     config_file: str
 
 
-
-# ---------------------------------------------------------------------------
-# Application bootstrap and usage examples
-# ---------------------------------------------------------------------------
-
-def initialize_objects() -> None:
-    """Build and validate the global object registry once.
-    """
-    object_registry.instantiate_all()
-
-
 if __name__ == "__main__":
-    initialize_objects()
+    object_registry.instantiate_all()
 
     apache_1 = object_registry.get_by_name("app.apache_1", ApacheRoot)
     apache_2 = object_registry.get_by_name("apache_2", SecondApacheRoot)
 
     static_files_1_a = object_registry.get_by_name("app.apache_1.static_files", StaticFilesApacheObject)
     static_files_2_a = object_registry.get_by_name("apache_2.static_files", StaticFilesApacheObject)
-
 
     static_files_1_b = apache_1.get_child_by_name("static_files", StaticFilesApacheObject)
     static_files_2_b = apache_2.get_child_by_name("static_files", StaticFilesApacheObject)
@@ -2409,7 +2482,16 @@ if __name__ == "__main__":
 
     # apache_2 uses the custom logger class configured at registration time.
     if isinstance(apache_2.logger, ApacheObjectLogger):
-        apache_2.logger.apache_event("Custom ApacheObjectLogger method called for %s", apache_2.name)
+        apache_2.logger.apache_event("Custom ApacheObjectLogger method called for %s",
+                                     apache_2.name,
+                                     event="configuration-check")
+
+    # Arbitrary future phases do not require an enum change. Context names and
+    # values are dynamically scoped and become available to every formatter.
+    with apache_1.logging_context("apache.virtual_host.reload",
+                                  virtual_host="example.org",
+                                  config_file=apache_1.config_file):
+        apache_1.logger.info("Reloading virtual-host configuration")
 
     # Every attribute can be changed dynamically. Setting a value to INHERIT
     # removes the local override and restores inheritance from the parent config.
@@ -2421,5 +2503,14 @@ if __name__ == "__main__":
     apache_2.logger_config.parent = LoggerParent.ROOT
     apache_2.logger.warning("This message now propagates directly to the root logger")
     apache_2.logger_config.parent = LoggerParent.OBJECT_PARENT
+
+    print(apache_2.logger.parent)
+    print(apache_2.logger.propagate)
+
+    print(static_files_2_a.logger.parent)
+    print(static_files_2_a.logger.propagate)
+
+    print(static_files_2_a._resolved_logger_config.file)
+    print(static_files_2_a._resolved_logger_config.propagate)
 
     print()
