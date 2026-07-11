@@ -17,16 +17,20 @@ tools.
 from __future__ import annotations
 
 import fnmatch
+import inspect
 import logging
 import os
 import re
 import tarfile
 
+from collections import Counter
+from threading import RLock
+
 from abc import ABC
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import MISSING, Field, dataclass, field, fields, replace
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from enum import Enum
@@ -53,6 +57,11 @@ __all__ = [
     "BaseObject",
     "DuplicateObjectNameError",
     "DuplicateRegistrationNameError",
+    "display_field",
+    "internal_field",
+    "masked_field",
+    "object_field",
+    "read_only_field",
     "ObjectLogger",
     "ObjectLoggerConfig",
     "ObjectLoggerContexts",
@@ -100,6 +109,515 @@ def _format_log_value(value: Any) -> str:
     if isinstance(value, Enum):
         return f"{type(value).__name__}.{value.name}"
     return str(value)
+
+
+# ---------------------------------------------------------------------------
+# Public dataclass-field helpers and sensitive-value protection
+# ---------------------------------------------------------------------------
+
+_FIELD_FROZEN = "frozen"
+_FIELD_INTERNAL = "internal"
+_FIELD_MASKED = "masked"
+_FIELD_DISPLAY = "display"
+
+_MASKED_VALUE = "***"
+_UNSET_MASKED_VALUE = "<not set>"
+
+
+def _build_object_field(*,
+                        default: Any = MISSING,
+                        default_factory: Any = MISSING,
+                        init: bool = True,
+                        repr: bool = True,
+                        compare: bool = True,
+                        hash: bool | None = None,
+                        kw_only: bool | Any = MISSING,
+                        frozen: bool = False,
+                        internal: bool = False,
+                        masked: bool = False,
+                        display: bool = False,
+                        metadata: Mapping[str, Any] | None = None) -> Field[Any]:
+    """
+    Build one dataclass field with framework metadata.
+
+    This private helper centralizes the repetitive ``dataclasses.field``
+    arguments used by all public field factories.
+
+    :param default:
+        The default value assigned to the field.
+
+    :param default_factory:
+        The callable used to create a default value.
+
+    :param init:
+        Whether the field is included in the generated constructor.
+
+    :param repr:
+        Whether the field is included in the generated dataclass representation.
+
+    :param compare:
+        Whether the field participates in generated comparisons.
+
+    :param hash:
+        Whether the field participates in the generated hash.
+
+    :param kw_only:
+        Whether the field is keyword-only.
+
+    :param frozen:
+        Whether reassignment is blocked after object initialization.
+
+    :param internal:
+        Whether the field is reserved for framework-internal use.
+
+    :param masked:
+        Whether the field value must be hidden in representations and logs.
+
+    :param display:
+        Whether the field adds useful information to ``BaseObject.__str__``.
+
+    :param metadata:
+        Additional metadata merged with the framework metadata.
+
+    :return:
+        Returns the configured dataclass field.
+    """
+
+    if default is not MISSING and default_factory is not MISSING:
+        raise ValueError("default and default_factory cannot be used together.")
+
+    field_metadata = dict(metadata or {})
+    field_metadata.update({_FIELD_FROZEN: frozen,
+                           _FIELD_INTERNAL: internal,
+                           _FIELD_MASKED: masked,
+                           _FIELD_DISPLAY: display})
+
+    # A masked value must never be exposed by the generated dataclass repr.
+    if masked:
+        repr = False
+
+    return field(default=default,
+                 default_factory=default_factory,
+                 init=init,
+                 repr=repr,
+                 hash=hash,
+                 compare=compare,
+                 metadata=field_metadata,
+                 kw_only=kw_only)
+
+
+def object_field(*,
+                 default: Any = MISSING,
+                 default_factory: Any = MISSING,
+                 init: bool = True,
+                 repr: bool = True,
+                 compare: bool = True,
+                 hash: bool | None = None,
+                 kw_only: bool | Any = MISSING,
+                 frozen: bool = False,
+                 masked: bool = False,
+                 display: bool = False,
+                 metadata: Mapping[str, Any] | None = None) -> Field[Any]:
+    """
+    Define a normal public workload field.
+
+    Use this helper for values that form part of an object's functional
+    configuration or runtime workload.
+
+    Examples:
+        host: str = object_field(display=True)
+            Exposes ``host`` as a normal constructor argument and includes it
+            in the concise object representation.
+
+    :param default:
+        The default value assigned to the field.
+
+    :param default_factory:
+        The callable used to create a default value.
+
+    :param init:
+        Whether the field is included in the generated constructor.
+
+    :param repr:
+        Whether the field is included in the generated dataclass representation.
+
+    :param compare:
+        Whether the field participates in generated comparisons.
+
+    :param hash:
+        Whether the field participates in the generated hash.
+
+    :param kw_only:
+        Whether the field is keyword-only.
+
+    :param frozen:
+        Whether reassignment is blocked after object initialization.
+
+    :param masked:
+        Whether the value is hidden from representations and protected logs.
+
+    :param display:
+        Whether the value is included in ``BaseObject.__str__``.
+
+    :param metadata:
+        Additional metadata attached to the dataclass field.
+
+    :return:
+        Returns a public workload field.
+    """
+
+    return _build_object_field(default=default,
+                               default_factory=default_factory,
+                               init=init,
+                               repr=repr,
+                               compare=compare,
+                               hash=hash,
+                               kw_only=kw_only,
+                               frozen=frozen,
+                               masked=masked,
+                               display=display,
+                               metadata=metadata)
+
+
+def read_only_field(*,
+                    default: Any = MISSING,
+                    default_factory: Any = MISSING,
+                    init: bool = True,
+                    repr: bool = True,
+                    compare: bool = True,
+                    hash: bool | None = None,
+                    kw_only: bool | Any = MISSING,
+                    masked: bool = False,
+                    display: bool = False,
+                    metadata: Mapping[str, Any] | None = None) -> Field[Any]:
+    """
+    Define a public field that becomes read-only after initialization.
+
+    Examples:
+        identifier: str = read_only_field(display=True)
+            Accepts the identifier during construction and prevents later
+            reassignment.
+
+    :param default:
+        The default value assigned to the field.
+
+    :param default_factory:
+        The callable used to create a default value.
+
+    :param init:
+        Whether the field is included in the generated constructor.
+
+    :param repr:
+        Whether the field is included in the generated dataclass representation.
+
+    :param compare:
+        Whether the field participates in generated comparisons.
+
+    :param hash:
+        Whether the field participates in the generated hash.
+
+    :param kw_only:
+        Whether the field is keyword-only.
+
+    :param masked:
+        Whether the value is hidden from representations and protected logs.
+
+    :param display:
+        Whether the value is included in ``BaseObject.__str__``.
+
+    :param metadata:
+        Additional metadata attached to the dataclass field.
+
+    :return:
+        Returns a public read-only field.
+    """
+
+    return _build_object_field(default=default,
+                               default_factory=default_factory,
+                               init=init,
+                               repr=repr,
+                               compare=compare,
+                               hash=hash,
+                               kw_only=kw_only,
+                               frozen=True,
+                               masked=masked,
+                               display=display,
+                               metadata=metadata)
+
+
+def internal_field(*,
+                   default: Any = MISSING,
+                   default_factory: Any = MISSING,
+                   frozen: bool = False,
+                   metadata: Mapping[str, Any] | None = None) -> Field[Any]:
+    """
+    Define a private framework field excluded from initialization and display.
+
+    Examples:
+        _cache: dict[str, Any] = internal_field(default_factory=dict)
+            Creates private mutable state without exposing it in the generated
+            constructor or representation.
+
+    :param default:
+        The default value assigned to the field.
+
+    :param default_factory:
+        The callable used to create a default value.
+
+    :param frozen:
+        Whether reassignment is blocked after object initialization.
+
+    :param metadata:
+        Additional metadata attached to the dataclass field.
+
+    :return:
+        Returns an internal framework field.
+    """
+
+    return _build_object_field(default=default,
+                               default_factory=default_factory,
+                               init=False,
+                               repr=False,
+                               compare=False,
+                               frozen=frozen,
+                               internal=True,
+                               metadata=metadata)
+
+
+def display_field(*,
+                  default: Any = MISSING,
+                  default_factory: Any = MISSING,
+                  init: bool = True,
+                  repr: bool = True,
+                  compare: bool = True,
+                  hash: bool | None = None,
+                  kw_only: bool | Any = MISSING,
+                  frozen: bool = False,
+                  metadata: Mapping[str, Any] | None = None) -> Field[Any]:
+    """
+    Define a workload field shown in the concise object representation.
+
+    :param default:
+        The default value assigned to the field.
+
+    :param default_factory:
+        The callable used to create a default value.
+
+    :param init:
+        Whether the field is included in the generated constructor.
+
+    :param repr:
+        Whether the field is included in the generated dataclass representation.
+
+    :param compare:
+        Whether the field participates in generated comparisons.
+
+    :param hash:
+        Whether the field participates in the generated hash.
+
+    :param kw_only:
+        Whether the field is keyword-only.
+
+    :param frozen:
+        Whether reassignment is blocked after object initialization.
+
+    :param metadata:
+        Additional metadata attached to the dataclass field.
+
+    :return:
+        Returns a display-enabled workload field.
+    """
+
+    return _build_object_field(default=default,
+                               default_factory=default_factory,
+                               init=init,
+                               repr=repr,
+                               compare=compare,
+                               hash=hash,
+                               kw_only=kw_only,
+                               frozen=frozen,
+                               display=True,
+                               metadata=metadata)
+
+
+def masked_field(*,
+                 default: Any = MISSING,
+                 default_factory: Any = MISSING,
+                 init: bool = True,
+                 compare: bool = True,
+                 hash: bool | None = None,
+                 kw_only: bool | Any = MISSING,
+                 frozen: bool = False,
+                 display: bool = True,
+                 metadata: Mapping[str, Any] | None = None) -> Field[Any]:
+    """
+    Define a sensitive workload field that is masked in all framework output.
+
+    A set value appears as ``***`` in ``BaseObject.__str__``. Empty values,
+    ``None``, and empty collections appear as ``<not set>``. The generated
+    dataclass representation always excludes the raw value.
+
+    Examples:
+        password: str = masked_field()
+            Accepts a password while preventing its plaintext value from
+            appearing in object representations and managed log handlers.
+
+    :param default:
+        The default value assigned to the field.
+
+    :param default_factory:
+        The callable used to create a default value.
+
+    :param init:
+        Whether the field is included in the generated constructor.
+
+    :param compare:
+        Whether the field participates in generated comparisons.
+
+    :param hash:
+        Whether the field participates in the generated hash.
+
+    :param kw_only:
+        Whether the field is keyword-only.
+
+    :param frozen:
+        Whether reassignment is blocked after object initialization.
+
+    :param display:
+        Whether the masked set-state is included in ``BaseObject.__str__``.
+
+    :param metadata:
+        Additional metadata attached to the dataclass field.
+
+    :return:
+        Returns a masked workload field.
+    """
+
+    return _build_object_field(default=default,
+                               default_factory=default_factory,
+                               init=init,
+                               repr=False,
+                               compare=compare,
+                               hash=hash,
+                               kw_only=kw_only,
+                               frozen=frozen,
+                               masked=True,
+                               display=display,
+                               metadata=metadata)
+
+
+class _SensitiveValueRegistry:
+    """Track masked values and redact them from managed logging output."""
+
+    def __init__(self) -> None:
+        self._values: Counter[str] = Counter()
+        self._lock = RLock()
+
+    @staticmethod
+    def _token(value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, bytes):
+            value = value.decode(errors="replace")
+        elif not isinstance(value, str):
+            value = str(value)
+        return value if value else None
+
+    def register(self,
+                 value: Any) -> None:
+        token = self._token(value)
+        if token is None:
+            return
+        with self._lock:
+            self._values[token] += 1
+
+    def unregister(self,
+                   value: Any) -> None:
+        token = self._token(value)
+        if token is None:
+            return
+        with self._lock:
+            count = self._values.get(token, 0)
+            if count <= 1:
+                self._values.pop(token, None)
+            else:
+                self._values[token] = count - 1
+
+    def redact_text(self,
+                    value: str) -> str:
+        with self._lock:
+            # Embedded replacement of extremely short values would corrupt
+            # unrelated text, timestamps, and numbers. Exact argument matches
+            # are still masked regardless of length by ``sanitize``.
+            tokens = sorted((token for token in self._values if len(token) >= 4),
+                            key=len,
+                            reverse=True)
+        for token in tokens:
+            value = value.replace(token, _MASKED_VALUE)
+        return value
+
+    def sanitize(self,
+                 value: Any) -> Any:
+        with self._lock:
+            tokens = set(self._values)
+
+        if isinstance(value, str):
+            if value in tokens:
+                return _MASKED_VALUE
+            return self.redact_text(value)
+        if isinstance(value, bytes):
+            decoded = value.decode(errors="replace")
+            if decoded in tokens:
+                return _MASKED_VALUE.encode()
+            return self.redact_text(decoded).encode()
+        if isinstance(value, tuple):
+            return tuple(self.sanitize(item) for item in value)
+        if isinstance(value, list):
+            return [self.sanitize(item) for item in value]
+        if isinstance(value, dict):
+            return {self.sanitize(key): self.sanitize(item)
+                    for key, item in value.items()}
+        if str(value) in tokens:
+            return _MASKED_VALUE
+        return value
+
+
+_sensitive_values = _SensitiveValueRegistry()
+
+
+class _MaskedValueFilter(logging.Filter):
+    """Redact registered masked values before a managed handler formats them."""
+
+    def filter(self,
+               record: logging.LogRecord) -> bool:
+        record.msg = _sensitive_values.sanitize(record.msg)
+        record.args = _sensitive_values.sanitize(record.args)
+
+        if hasattr(record, "log_context_data"):
+            record.log_context_data = _sensitive_values.sanitize(record.log_context_data)
+        if hasattr(record, "log_context_values"):
+            record.log_context_values = _sensitive_values.sanitize(record.log_context_values)
+
+        return True
+
+
+_masked_value_filter = _MaskedValueFilter()
+
+
+def _masked_value_is_set(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, (str, bytes, tuple, list, dict, set, frozenset)):
+        return bool(value)
+    return True
+
+
+def _format_display_value(value: Any,
+                          *,
+                          masked: bool = False) -> str:
+    if masked:
+        return _MASKED_VALUE if _masked_value_is_set(value) else _UNSET_MASKED_VALUE
+    return _format_log_value(value)
 
 
 # ---------------------------------------------------------------------------
@@ -1450,6 +1968,9 @@ class ObjectLogger(logging.Logger):
             configured_handlers.append(handler)
 
         for handler in configured_handlers:
+            if not any(isinstance(filter_, _MaskedValueFilter)
+                       for filter_ in handler.filters):
+                handler.addFilter(_masked_value_filter)
             self.addHandler(handler)
             self._managed_handlers.append(handler)
         self._resolved_config = config
@@ -1703,6 +2224,41 @@ class _ObjectRegistry:
         finally:
             self._building = False
 
+    @staticmethod
+    def _constructor_masked_values(
+            registration: _ObjectRegistration) -> tuple[Any, ...]:
+        """
+        Return masked constructor values before the object instance exists.
+
+        Registering these values temporarily protects constructor-time logs and
+        exception messages. After successful construction, ``BaseObject``
+        registers the same values permanently for the lifetime of the object.
+
+        :param registration:
+            The registration whose delayed constructor arguments are inspected.
+
+        :return:
+            Returns the masked values present in the delayed constructor input.
+        """
+
+        try:
+            bound_arguments = inspect.signature(registration.cls).bind_partial(
+                *registration.constructor_args,
+                **registration.constructor_kwargs,
+            )
+        except (TypeError, ValueError):
+            return ()
+
+        masked_names = {
+            dataclass_field.name
+            for dataclass_field in fields(registration.cls)
+            if dataclass_field.metadata.get(_FIELD_MASKED, False)
+        }
+
+        return tuple(bound_arguments.arguments[name]
+                     for name in masked_names
+                     if name in bound_arguments.arguments)
+
     def _instantiate_registration(self,
                                   registration: _ObjectRegistration,
                                   parent_instance: BaseObject | None) -> BaseObject:
@@ -1752,6 +2308,10 @@ class _ObjectRegistry:
         context = _ConstructionContext(registration=registration, object_name=object_name, parent=parent_instance)
         token = _construction_context.set(context)
 
+        temporary_masked_values = self._constructor_masked_values(registration)
+        for masked_value in temporary_masked_values:
+            _sensitive_values.register(masked_value)
+
         try:
             # Constructor signatures differ between registered dataclasses. At
             # this dynamic boundary the safe common result type is BaseObject.
@@ -1761,6 +2321,8 @@ class _ObjectRegistry:
             raise RegistryError(f"Could not instantiate registration {registration.name!r} as object {object_name!r} using "
                                 f"{registration.cls.__module__}.{registration.cls.__qualname__}: {error}") from error
         finally:
+            for masked_value in temporary_masked_values:
+                _sensitive_values.unregister(masked_value)
             _construction_context.reset(token)
 
         # Commit the fully initialized instance to all internal indexes only
@@ -2571,6 +3133,7 @@ class _ObjectRegistry:
         # Break tree references first, then clear per-registration instances
         # and all global lookup indexes.
         for instance in self._instances_by_name.values():
+            instance._unregister_masked_fields()
             instance._children.clear()
         for registration in self._registrations_by_name.values():
             registration.instances.clear()
@@ -2622,47 +3185,28 @@ class BaseObject(ABC):
     # These names are intentionally public because users need them for normal
     # inspection and navigation. The custom frozen metadata prevents replacing
     # them after initialization.
-    name: str = field(init=False,
-                      metadata={"frozen": True})
-    logger: ObjectLogger = field(init=False,
-                                 repr=False,
-                                 metadata={"frozen": True})
-    parent: BaseObject | None = field(default=None,
-                                      init=False,
-                                      repr=False,
-                                      metadata={"frozen": True})
+    name: str = read_only_field(init=False)
+    logger: ObjectLogger = read_only_field(init=False,
+                                           repr=False)
+    parent: BaseObject | None = read_only_field(default=None,
+                                                init=False,
+                                                repr=False)
 
     # Public logger configuration.
-    #
-    # One immutable configuration object keeps the dataclass API compact and
-    # allows complete logger profiles to be passed through @register kwargs.
-    logger_config: ObjectLoggerConfig = field(default_factory=ObjectLoggerConfig,
-                                              repr=False,
-                                              kw_only=True)
-    _resolved_logger_config: _ResolvedObjectLoggerConfig = field(init=False,
-                                                                 repr=False)
+    logger_config: ObjectLoggerConfig = object_field(default_factory=ObjectLoggerConfig,
+                                                     repr=False,
+                                                     kw_only=True)
 
     # Private mutable framework state.
-    #
-    # Direct access would bypass locking, indexing, or tree validation, so every
-    # field is hidden behind safe properties and registry operations.
-    _initialized: bool = field(default=False,
-                               init=False,
-                               repr=False)
-    _status: ObjectStatus = field(default=ObjectStatus.INITIALIZING,
-                                  init=False,
-                                  repr=False,
-                                  metadata={"frozen": True})
-    _children: list[BaseObject] = field(default_factory=list,
-                                        init=False,
-                                        repr=False)
-    _abstract: bool = field(default=False,
-                            init=False,
-                            repr=False,
-                            metadata={"frozen": True})
-    _registration_name: str = field(init=False,
-                                    repr=False,
-                                    metadata={"frozen": True})
+    _resolved_logger_config: _ResolvedObjectLoggerConfig = internal_field()
+    _initialized: bool = internal_field(default=False)
+    _status: ObjectStatus = internal_field(default=ObjectStatus.INITIALIZING,
+                                           frozen=True)
+    _children: list[BaseObject] = internal_field(default_factory=list)
+    _abstract: bool = internal_field(default=False,
+                                     frozen=True)
+    _registration_name: str = internal_field(frozen=True)
+
 
     def __post_init__(self) -> None:
         """
@@ -2711,17 +3255,66 @@ class BaseObject(ABC):
             object_registry._attach_child(self.parent, self)
         object.__setattr__(self, "_initialized", True)
         object.__setattr__(self, "_status", ObjectStatus.READY)
+        self._register_masked_fields()
         self.logger.debug("Initialized %s.", self)
 
     def __str__(self) -> str:
         """
-        Return a concise, stable representation for logs and diagnostics.
+        Return a concise, safe representation for logs and diagnostics.
+
+        Fields created with ``display_field`` or ``display=True`` are appended
+        to the object name. Masked fields expose only whether a value is set.
 
         :return:
-            Returns a value of type ``str``.
+            Returns the safe object representation.
         """
 
-        return f"{type(self).__name__}(name='{self.name}')"
+        parts = [f"name='{self.name}'"]
+
+        for dataclass_field in fields(self):
+            if not dataclass_field.metadata.get(_FIELD_DISPLAY, False):
+                continue
+            if dataclass_field.metadata.get(_FIELD_INTERNAL, False):
+                continue
+            if dataclass_field.name == "name":
+                continue
+
+            try:
+                value = getattr(self, dataclass_field.name)
+            except AttributeError:
+                continue
+
+            formatted_value = _format_display_value(
+                value,
+                masked=dataclass_field.metadata.get(_FIELD_MASKED, False),
+            )
+            parts.append(f"{dataclass_field.name}={formatted_value}")
+
+        return f"{type(self).__name__}({', '.join(parts)})"
+
+    def _register_masked_fields(self) -> None:
+        """Register all current masked values with the defensive log filter."""
+
+        for dataclass_field in fields(self):
+            if not dataclass_field.metadata.get(_FIELD_MASKED, False):
+                continue
+            try:
+                value = getattr(self, dataclass_field.name)
+            except AttributeError:
+                continue
+            _sensitive_values.register(value)
+
+    def _unregister_masked_fields(self) -> None:
+        """Remove all current masked values from the defensive log filter."""
+
+        for dataclass_field in fields(self):
+            if not dataclass_field.metadata.get(_FIELD_MASKED, False):
+                continue
+            try:
+                value = getattr(self, dataclass_field.name)
+            except AttributeError:
+                continue
+            _sensitive_values.unregister(value)
 
     def __setattr__(self,
                     key: str,
@@ -2750,12 +3343,27 @@ class BaseObject(ABC):
             if isinstance(current_config, ObjectLoggerConfig):
                 current_config._unbind()
 
+        dataclass_field = None
+        previous_masked_value = MISSING
+
         if initialized:
-            dataclass_field = next((dataclass_field for dataclass_field in fields(self) if dataclass_field.name == key), None)
-            if dataclass_field is not None and dataclass_field.metadata.get("frozen", False):
+            dataclass_field = next((dataclass_field
+                                    for dataclass_field in fields(self)
+                                    if dataclass_field.name == key),
+                                   None)
+            if dataclass_field is not None and dataclass_field.metadata.get(_FIELD_FROZEN, False):
                 raise AttributeError(f"Field {dataclass_field.name!r} is frozen and cannot be modified.")
+            if dataclass_field is not None and dataclass_field.metadata.get(_FIELD_MASKED, False):
+                previous_masked_value = getattr(self, key, MISSING)
 
         super().__setattr__(key, value)
+
+        if (initialized
+                and dataclass_field is not None
+                and dataclass_field.metadata.get(_FIELD_MASKED, False)):
+            if previous_masked_value is not MISSING:
+                _sensitive_values.unregister(previous_masked_value)
+            _sensitive_values.register(value)
 
         # Logger configuration fields are intentionally mutable. Reapply the
         # complete configuration after each change so parent linkage, level,
@@ -3260,7 +3868,11 @@ def register(*,
     ...
 
 
-@dataclass_transform()
+@dataclass_transform(field_specifiers=(object_field,
+                                       read_only_field,
+                                       internal_field,
+                                       display_field,
+                                       masked_field))
 def register(*,
              abstract: bool = False,
              name: str | None = None,
@@ -3348,6 +3960,7 @@ def _configure_example_bootstrap_logging() -> None:
     console_handler.set_name("example-bootstrap-console")
     console_handler.setLevel(logging.DEBUG)
     console_handler.setFormatter(ObjectLogger.Formatter("%(message)s"))
+    console_handler.addFilter(_masked_value_filter)
     root_logger.addHandler(console_handler)
 
 
@@ -3436,11 +4049,11 @@ class ReverseProxyApacheObject(ApacheObject):
                                                       file_backup_count=3,
                                                       file_archive_backup_count=2,
                                                       contexts=ObjectLoggerContexts({#"object.move": LoggerContextLevels(level=logging.DEBUG),
-                                                                                     "logger.reconfigure": LoggerContextLevels(level=logging.DEBUG),
-                                                                                     # "broadcast": LoggerContextLevels(level=logging.DEBUG,
-                                                                                     #                                  console_level=logging.WARNING,
-                                                                                     #                                  file_level=logging.DEBUG),
-                                                                                     "apache.event": LoggerContextLevels(level=logging.INFO)}))})
+                                                          "logger.reconfigure": LoggerContextLevels(level=logging.DEBUG),
+                                                          # "broadcast": LoggerContextLevels(level=logging.DEBUG,
+                                                          #                                  console_level=logging.WARNING,
+                                                          #                                  file_level=logging.DEBUG),
+                                                          "apache.event": LoggerContextLevels(level=logging.INFO)}))})
 class App(BaseObject):
     ...
 
