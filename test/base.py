@@ -244,12 +244,22 @@ class _ObjectRegistry:
         # before instances exist, then preserve the decorated class type.
         cls._abstract = abstract
 
+        # No object instance exists during registration. Use the future local
+        # object logger name so the message participates in the same logging
+        # namespace without adding handlers of its own.
+        logging.getLogger(normalized_name).debug("Registered %s.%s as %s (abstract=%s, parent=%r)",
+                                                 cls.__module__,
+                                                 cls.__qualname__,
+                                                 normalized_name,
+                                                 abstract,
+                                                 parent)
+
         return cls
 
     def instantiate_all(self) -> None:
         """
         Validate the complete registry and instantiate every concrete root.
-        
+
         The build runs only once. It first verifies that every ``BaseObject`` subclass
         was decorated, that all parent references resolve, and that the registration
         graph has no cycles. Concrete root registrations are then instantiated; their
@@ -265,6 +275,8 @@ class _ObjectRegistry:
         if self._built:
             return
         self._building = True
+        registry_logger = logging.getLogger("object_registry")
+        registry_logger.debug("Starting object-registry validation and construction")
         try:
             # Validate the complete definition graph before creating the first
             # object, so configuration errors cannot leave a partial tree.
@@ -281,8 +293,10 @@ class _ObjectRegistry:
                     continue
                 self._instantiate_registration(registration=registration, parent_instance=None)
             self._built = True
+            registry_logger.debug("Object registry built successfully with %d instances", len(self._instances_by_name))
         except Exception:
             # Roll back every object and index created during a failed build.
+            registry_logger.exception("Object registry build failed; rolling back created instances")
             self._reset_instances()
             raise
         finally:
@@ -293,7 +307,7 @@ class _ObjectRegistry:
                                   parent_instance: BaseObject | None) -> BaseObject:
         """
         Instantiate one concrete registration below an optional parent.
-        
+
         The method derives the full hierarchical object name, reuses an already
         created instance for that exact path, creates a temporary construction context,
         invokes the dynamically typed dataclass constructor, indexes the instance, and
@@ -314,6 +328,14 @@ class _ObjectRegistry:
         if object_name in self._instances_by_name:
             existing = self._instances_by_name[object_name]
             raise DuplicateObjectNameError(f"Object name {object_name!r} is already used by {type(existing).__module__}.{type(existing).__qualname__}.")
+
+        # Emit the creation message through the future object logger. It has no
+        # handlers by default and therefore follows normal parent/root logging.
+        construction_logger = logging.getLogger(object_name)
+        construction_logger.debug("Instantiating object %s from %s.%s",
+                                  object_name,
+                                  registration.cls.__module__,
+                                  registration.cls.__qualname__)
 
         # Publish framework-owned values only for the duration of this one
         # constructor call. BaseObject.__post_init__ consumes this context.
@@ -337,6 +359,7 @@ class _ObjectRegistry:
         self._index_instance(instance)
         self._instance_registrations[id(instance)] = registration
         self._instantiate_children(parent_instance=instance, parent_registration=registration)
+        instance.logger.debug("Registered instantiated object %s in all lookup indexes", instance.name)
 
         return instance
 
@@ -345,7 +368,7 @@ class _ObjectRegistry:
                               parent_registration: _ObjectRegistration) -> None:
         """
         Instantiate all registrations that belong below one parent instance.
-        
+
         Concrete parent references match one exact registration. Abstract parent
         references act as templates and match concrete instances derived from the
         abstract class. This is what allows template children to be cloned below every
@@ -381,7 +404,7 @@ class _ObjectRegistry:
     def _validate_all_subclasses_registered(self) -> None:
         """
         Ensure that every loaded ``BaseObject`` subclass uses ``@register``.
-        
+
         The validation runs immediately before the build. It catches forgotten
         decorators after all definition modules have been imported, while still
         allowing normal class creation during module import.
@@ -408,7 +431,7 @@ class _ObjectRegistry:
     def _validate_parent_references(self) -> None:
         """
         Resolve every configured parent reference once before construction.
-        
+
         This provides an early, deterministic error for unknown parent names, classes
         that were not registered, and unsupported parent reference values.
 
@@ -421,7 +444,7 @@ class _ObjectRegistry:
     def _validate_no_parent_loops(self) -> None:
         """
         Detect cycles in the registration-level parent graph.
-        
+
         A depth-first traversal maintains a temporary ``visiting`` set and a completed
         ``visited`` set. Encountering an entry that is already being visited proves
         that the parent chain contains a cycle.
@@ -437,7 +460,7 @@ class _ObjectRegistry:
         def visit(_registration: _ObjectRegistration) -> None:
             if _registration.name in visited:
                 return
-            if registration.name in visiting:
+            if _registration.name in visiting:
                 raise ObjectTreeLoopError(f"Parent loop detected at registration {_registration.name!r}.")
             visiting.add(_registration.name)
             parent = self._resolve_parent_registration(_registration)
@@ -453,7 +476,7 @@ class _ObjectRegistry:
     def _all_subclasses(cls: type[BaseObject]) -> tuple[type[BaseObject], ...]:
         """
         Return every direct and indirect subclass of ``BaseObject``.
-        
+
         Python's ``__subclasses__`` typing is not precise enough for some static type
         checkers, therefore the runtime list is deliberately cast to
         ``list[type[BaseObject]]`` before traversal.
@@ -482,7 +505,7 @@ class _ObjectRegistry:
                                      registration: _ObjectRegistration) -> _ObjectRegistration | None:
         """
         Resolve a registration's parent reference to registration metadata.
-        
+
         A parent may be omitted, referenced by its registration name, or referenced by
         the registered class object. The method never returns an instance because it
         operates on the definition graph before object construction.
@@ -529,7 +552,7 @@ class _ObjectRegistry:
                                    cls: type[_T]) -> _ObjectRegistration:
         """
         Return registration metadata for one registered class.
-        
+
         This helper is private because mutable registration metadata is an internal
         implementation detail and should not be exposed as normal user API.
 
@@ -547,13 +570,13 @@ class _ObjectRegistry:
                     name: str) -> BaseObject:
         """
         Return exactly one instantiated object by full name or unique suffix.
-        
+
         Examples:
             ``app.apache_1.static_files`` resolves by its full path.
             ``apache_1.static_files`` resolves by a unique path suffix.
             ``static_files`` resolves only when that suffix identifies exactly one
             object, optionally after filtering by ``expected_type``.
-        
+
         A missing object raises ``KeyError`` and an ambiguous suffix raises
         ``AmbiguousObjectNameError``.
 
@@ -569,13 +592,13 @@ class _ObjectRegistry:
                     expected_type: type[_T]) -> _T:
         """
         Return exactly one instantiated object by full name or unique suffix.
-        
+
         Examples:
             ``app.apache_1.static_files`` resolves by its full path.
             ``apache_1.static_files`` resolves by a unique path suffix.
             ``static_files`` resolves only when that suffix identifies exactly one
             object, optionally after filtering by ``expected_type``.
-        
+
         A missing object raises ``KeyError`` and an ambiguous suffix raises
         ``AmbiguousObjectNameError``.
 
@@ -591,13 +614,13 @@ class _ObjectRegistry:
                     expected_type: type[_T] | None = None) -> BaseObject | _T:
         """
         Return exactly one instantiated object by full name or unique suffix.
-        
+
         Examples:
             ``app.apache_1.static_files`` resolves by its full path.
             ``apache_1.static_files`` resolves by a unique path suffix.
             ``static_files`` resolves only when that suffix identifies exactly one
             object, optionally after filtering by ``expected_type``.
-        
+
         A missing object raises ``KeyError`` and an ambiguous suffix raises
         ``AmbiguousObjectNameError``.
 
@@ -635,11 +658,11 @@ class _ObjectRegistry:
                      pattern: str) -> tuple[BaseObject, ...]:
         """
         Find zero or more objects using segment-aware wildcard matching.
-        
+
         ``*`` matches exactly one hierarchy segment, while ``**`` matches zero or more
         segments. The search also considers every valid suffix path and removes
         duplicate instances that matched through multiple suffixes.
-        
+
         Examples:
             ``app.*.static_files`` matches one segment between ``app`` and
             ``static_files``.
@@ -659,11 +682,11 @@ class _ObjectRegistry:
                      expected_type: type[_T]) -> tuple[_T, ...]:
         """
         Find zero or more objects using segment-aware wildcard matching.
-        
+
         ``*`` matches exactly one hierarchy segment, while ``**`` matches zero or more
         segments. The search also considers every valid suffix path and removes
         duplicate instances that matched through multiple suffixes.
-        
+
         Examples:
             ``app.*.static_files`` matches one segment between ``app`` and
             ``static_files``.
@@ -672,6 +695,7 @@ class _ObjectRegistry:
             that concrete type.
 
         :param pattern: The wildcard pattern to match.
+        :param expected_type: The expected type of the object.
         :return: The object or None if no object was found.
         """
 
@@ -682,11 +706,11 @@ class _ObjectRegistry:
                      expected_type: type[_T] | None = None) -> tuple[BaseObject, ...] | tuple[_T, ...]:
         """
         Find zero or more objects using segment-aware wildcard matching.
-        
+
         ``*`` matches exactly one hierarchy segment, while ``**`` matches zero or more
         segments. The search also considers every valid suffix path and removes
         duplicate instances that matched through multiple suffixes.
-        
+
         Examples:
             ``app.*.static_files`` matches one segment between ``app`` and
             ``static_files``.
@@ -695,6 +719,7 @@ class _ObjectRegistry:
             that concrete type.
 
         :param pattern: The wildcard pattern to match.
+        :param expected_type: The expected type of the object.
         :return: The object or None if no object was found.
         """
 
@@ -729,7 +754,7 @@ class _ObjectRegistry:
                   name: str) -> type[BaseObject]:
         """
         Return the registered class for a registration name.
-        
+
         When ``expected_type`` is supplied, the method additionally verifies that the
         registered class is a subclass of the requested base type.
 
@@ -745,7 +770,7 @@ class _ObjectRegistry:
                   expected_type: type[_T]) -> type[_T]:
         """
         Return the registered class for a registration name.
-        
+
         When ``expected_type`` is supplied, the method additionally verifies that the
         registered class is a subclass of the requested base type.
 
@@ -761,7 +786,7 @@ class _ObjectRegistry:
                   expected_type: type[_T] | None = None) -> type[BaseObject] | type[_T]:
         """
         Return the registered class for a registration name.
-        
+
         When ``expected_type`` is supplied, the method additionally verifies that the
         registered class is a subclass of the requested base type.
 
@@ -807,7 +832,7 @@ class _ObjectRegistry:
                            name: str) -> BaseObject | None:
         """
         Resolve a descendant path relative to one parent object.
-        
+
         The supplied name may be relative, such as ``routes.static_files``, or already
         start with the parent's complete path. Only objects below the supplied parent
         are accepted.
@@ -853,12 +878,12 @@ class _ObjectRegistry:
                       child: _T) -> _T:
         """
         Attach or move a child object while preserving registry consistency.
-        
+
         The method rejects cycles, removes the object from its previous parent, checks
         all renamed subtree paths for collisions, updates the full names of the child
         and every descendant, refreshes all search indexes, and finally links the child
         to the new parent.
-        
+
         It is private because directly moving tree nodes is a privileged operation;
         callers should use ``BaseObject.add_child``.
 
@@ -877,7 +902,10 @@ class _ObjectRegistry:
                 raise ObjectTreeLoopError(f"Attaching {child.name!r} below {parent.name!r} would create a parent loop.")
             current = current.parent
         if child.parent is parent and child in parent._children:
+            child.logger.debug("Object %s is already attached to parent %s", child.name, parent.name)
             return child
+
+        child.logger.debug("Preparing to move object %s below parent %s", child.name, parent.name)
 
         # Detach from the previous parent only after the target relationship is
         # proven cycle-free.
@@ -920,6 +948,12 @@ class _ObjectRegistry:
             self._index_instance(instance)
         if child not in parent._children:
             parent._children.append(child)
+
+        # Recreate the explicit logger-parent links for the renamed subtree.
+        # This also moves local handlers and formatter configuration onto the
+        # logger objects associated with the new hierarchical names.
+        child._configure_logger_tree()
+        child.logger.debug("Attached object %s below parent %s", child.name, parent.name)
 
         return child
 
@@ -1027,7 +1061,7 @@ class _ObjectRegistry:
     def _get_object_name_paths(object_name: str) -> tuple[str, ...]:
         """
         Build every addressable suffix for one hierarchical object name.
-        
+
         For ``app.apache.routes`` the result is
         ``('app.apache.routes', 'apache.routes', 'routes')``.
 
@@ -1043,7 +1077,7 @@ class _ObjectRegistry:
                            pattern: str) -> bool:
         """
         Match one dot-separated object path against a wildcard pattern.
-        
+
         Matching is segment based: ordinary shell wildcards are applied inside one
         segment, ``*`` therefore cannot cross a dot, and the special segment ``**``
         can consume any number of hierarchy levels.
@@ -1105,7 +1139,7 @@ class _ObjectRegistry:
     def _reset_instances(self) -> None:
         """
         Discard every partially or fully created instance and clear indexes.
-        
+
         This rollback helper is used after a failed build so a later diagnostic run
         starts from a clean registry state.
 
@@ -1174,6 +1208,22 @@ class BaseObject(ABC):
                                       repr=False,
                                       metadata={"frozen": True})
 
+    # Public logger configuration.
+    #
+    # The object logger itself remains framework-managed and read-only. These
+    # fields are the supported configuration surface. Changing one of them
+    # after initialization automatically reapplies the logger configuration.
+    log_follow_parent: bool = field(default=True,
+                                    kw_only=True)
+    log_level: int | str | None = field(default=None,
+                                        kw_only=True)
+    log_handlers: tuple[logging.Handler, ...] = field(default_factory=tuple,
+                                                      repr=False,
+                                                      kw_only=True)
+    log_formatter: logging.Formatter | None = field(default=None,
+                                                    repr=False,
+                                                    kw_only=True)
+
     # Private mutable framework state.
     #
     # Direct access would bypass locking, indexing, or tree validation, so every
@@ -1191,11 +1241,14 @@ class BaseObject(ABC):
     _registration_name: str = field(init=False,
                                     repr=False,
                                     metadata={"frozen": True})
+    _managed_log_handlers: list[logging.Handler] = field(default_factory=list,
+                                                         init=False,
+                                                         repr=False)
 
     def __post_init__(self) -> None:
         """
         Finalize a registry-created dataclass instance.
-        
+
         The method reads the active construction context, assigns immutable framework
         attributes, creates the hierarchical logger, rejects accidental construction
         of abstract templates, attaches the object to its parent, and finally enables
@@ -1219,27 +1272,29 @@ class BaseObject(ABC):
         object.__setattr__(self, "_abstract", registration.abstract)
         object.__setattr__(self, "_registration_name", registration.name)
 
-        # Logger hierarchy mirrors the object path. The logger reference itself
-        # is read-only, while normal logging configuration remains external.
-        logger_name = context.object_name
-        logger = logging.getLogger(logger_name)
-        object.__setattr__(self, "logger", logger)
+        # Reject abstract templates before creating any runtime tree links.
         if self._abstract:
             raise AttributeError(f"Object {self.name!r} is abstract and cannot be instantiated.")
+
+        # Create and configure the object logger before attaching the node. The
+        # logger starts without handlers and forwards records to its parent by
+        # default. Root loggers forward to Python's root logger.
+        self._configure_logger()
+        self.logger.debug("Initializing object %s", self.name)
 
         # Link the object into the runtime tree before enabling frozen-field
         # protection. The registry also keeps all indexes synchronized.
         if self.parent is not None:
             object_registry._attach_child(self.parent, self)
         object.__setattr__(self, "_initialized", True)
-        self.logger.debug("Initialized %s", self)
+        self.logger.debug("Initialized object %s", self.name)
 
     def __setattr__(self,
                     key: str,
                     value: Any) -> None:
         """
         Prevent changes to dataclass fields marked with ``metadata={'frozen': True}``.
-        
+
         The protection is enabled only after framework initialization. Internal code
         can temporarily disable it through the private ``_unlocked`` context manager.
 
@@ -1250,11 +1305,87 @@ class BaseObject(ABC):
 
         # Before initialization, dataclass and framework assignments must pass.
         # Afterwards, only fields explicitly marked frozen are protected.
-        if getattr(self, "_initialized", False):
+        initialized = getattr(self, "_initialized", False)
+        if initialized:
             dataclass_field = next((dataclass_field for dataclass_field in fields(self) if dataclass_field.name == key), None)
             if dataclass_field is not None and dataclass_field.metadata.get("frozen", False):
                 raise AttributeError(f"Field {dataclass_field.name!r} is frozen and cannot be modified.")
+
         super().__setattr__(key, value)
+
+        # Logger configuration fields are intentionally mutable. Reapply the
+        # complete configuration after each change so parent linkage, level,
+        # handlers, and formatter can never drift apart.
+        if initialized and key in {"log_follow_parent",
+                                   "log_level",
+                                   "log_handlers",
+                                   "log_formatter"}:
+            self._configure_logger_tree()
+
+    def _configure_logger(self) -> None:
+        """
+        Create or refresh this object's logger from the framework fields.
+
+        Default behavior intentionally adds no handlers. Records propagate to
+        the parent object's logger, or to Python's root logger for a root object.
+        Setting ``log_follow_parent`` to ``False`` disconnects both propagation
+        and effective-level inheritance. In that mode a missing ``log_level``
+        means ``NOTSET`` and the logger accepts all records for its own handlers.
+        :return: None
+        """
+
+        previous_logger = getattr(self, "logger", None)
+
+        # Remove only handlers previously attached by this object. External
+        # handlers are not touched, even when the logger already existed.
+        if isinstance(previous_logger, logging.Logger):
+            for handler in self._managed_log_handlers:
+                if handler in previous_logger.handlers:
+                    previous_logger.removeHandler(handler)
+
+        logger = logging.getLogger(self.name)
+        object.__setattr__(self, "logger", logger)
+        self._managed_log_handlers.clear()
+
+        # Explicitly mirror the object hierarchy in the logging hierarchy. This
+        # is refreshed after re-parenting because the object path and parent
+        # logger may both have changed.
+        if self.log_follow_parent:
+            logger.parent = self.parent.logger if self.parent is not None else logging.getLogger()
+            logger.propagate = True
+            logger.setLevel(logging.NOTSET if self.log_level is None else self.log_level)
+        else:
+            logger.parent = None
+            logger.propagate = False
+            logger.setLevel(logging.NOTSET if self.log_level is None else self.log_level)
+
+        # Attach only explicitly configured handlers. The default empty tuple
+        # ensures child loggers merely forward records upward.
+        for handler in self.log_handlers:
+            if self.log_formatter is not None:
+                handler.setFormatter(self.log_formatter)
+            logger.addHandler(handler)
+            self._managed_log_handlers.append(handler)
+
+        logger.debug("Configured logger %s: follow_parent=%s, level=%s, handlers=%d",
+                     logger.name,
+                     self.log_follow_parent,
+                     logging.getLevelName(logger.level),
+                     len(self._managed_log_handlers))
+
+    def _configure_logger_tree(self) -> None:
+        """
+        Refresh this logger and every descendant logger.
+
+        Descendant refresh is required after re-parenting because each child
+        holds an explicit ``logging.Logger.parent`` reference.
+
+        :return: None
+        """
+
+        self._configure_logger()
+        for child in self._children:
+            child._configure_logger_tree()
 
     @contextmanager
     def _unlocked(self) -> Iterator[BaseObject]:
@@ -1324,6 +1455,7 @@ class BaseObject(ABC):
         Return every descendant in depth-first order as an immutable tuple.
         :return: Every descendant in depth-first order as an immutable tuple.
         """
+
         result: list[BaseObject] = []
         visited: set[int] = set()
 
