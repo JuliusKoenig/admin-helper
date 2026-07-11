@@ -31,7 +31,7 @@ from abc import ABC
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import MISSING, Field, dataclass, field, fields, replace
+from dataclasses import MISSING, Field, dataclass, field as dataclass_field, fields, replace
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from enum import Enum
@@ -52,12 +52,16 @@ from admin_helper.exceptions import (
     UnregisteredSubclassError,
 )
 from admin_helper.settings import AdminHelperSettings
+from admin_helper.warnings import (
+    FieldConfigurationWarning,
+    LoggerConfigurationWarning,
+    SensitiveValueWarning,
+)
 
 __all__ = [
     "AmbiguousObjectNameError",
     "BaseObject",
     "ComputedFieldInfo",
-    "DEFAULT_EMPTY_FIELD_VALUES",
     "DuplicateObjectNameError",
     "DuplicateRegistrationNameError",
     "FIELD_INFO_METADATA_KEY",
@@ -68,37 +72,41 @@ __all__ = [
     "LoggerContextLevels",
     "LoggerContextStatus",
     "LoggerParent",
-    "MASKED_FIELD_VALUE",
-    "NOT_SET_FIELD_VALUE",
     "ObjectFieldDefinition",
     "ObjectFieldSource",
     "ObjectLogger",
     "ObjectLoggerConfig",
     "ObjectLoggerContexts",
+    "ObjectRegistryConfig",
+    "FieldFrameworkConfig",
+    "LoggingFrameworkConfig",
+    "MaskingFrameworkConfig",
+    "WarningFrameworkConfig",
     "ObjectStatus",
     "ObjectTreeLoopError",
     "ParentResolutionError",
     "RegistryError",
-    "SENSITIVE_VALUE_FILTER_MODE",
     "SensitiveValueFilterMode",
     "UnregisteredSubclassError",
     "computed_field",
-    "display_field",
     "get_object_fields",
     "initialize_objects",
-    "internal_field",
     "is_abstract",
-    "masked_field",
-    "object_field",
+    "Display",
+    "FieldMatch",
+    "FieldTrait",
+    "Internal",
+    "Masked",
+    "ReadOnly",
+    "field",
     "object_registry",
-    "read_only_field",
-    "refresh_sensitive_values",
     "register",
 ]
 
 # Generic type variable used to preserve concrete BaseObject subclasses in the
 # public lookup, child-access, and decorator APIs.
 _T = TypeVar("_T", bound="BaseObject")
+_FieldTraitT = TypeVar("_FieldTraitT", bound="FieldTrait")
 
 # Reserved method names may later be used to constrain or document broadcast
 # operations. The collection is private because callers must not mutate global
@@ -131,9 +139,9 @@ def _format_log_value(value: Any) -> str:
 # ---------------------------------------------------------------------------
 
 FIELD_INFO_METADATA_KEY = "field_info"
-MASKED_FIELD_VALUE = "<MASKED>"
-NOT_SET_FIELD_VALUE = "<NOT SET>"
-DEFAULT_EMPTY_FIELD_VALUES: tuple[Any, ...] = (
+_DEFAULT_MASKED_FIELD_VALUE = "<MASKED>"
+_DEFAULT_NOT_SET_FIELD_VALUE = "<NOT SET>"
+_DEFAULT_EMPTY_FIELD_VALUES: tuple[Any, ...] = (
     None,
     "",
     b"",
@@ -153,7 +161,39 @@ class SensitiveValueFilterMode(Enum):
     FIELDS_AND_COMPUTED = "fields_and_computed"
 
 
-SENSITIVE_VALUE_FILTER_MODE = SensitiveValueFilterMode.FIELDS
+
+
+class FieldTrait:
+    """Base class for declarative field traits."""
+
+
+@dataclass(frozen=True, slots=True)
+class Display(FieldTrait):
+    """Include a field in the concise object representation."""
+
+
+@dataclass(frozen=True, slots=True)
+class ReadOnly(FieldTrait):
+    """Prevent reassignment after object initialization."""
+
+
+@dataclass(frozen=True, slots=True)
+class Internal(FieldTrait):
+    """Mark a field as an implementation-only attribute."""
+
+
+@dataclass(frozen=True, slots=True)
+class Masked(FieldTrait):
+    """Hide a field value in representations and managed logs."""
+
+    empty_values: tuple[Any, ...] = ()
+
+
+class FieldMatch(Enum):
+    """Select whether all or any requested traits must match."""
+
+    ALL = "all"
+    ANY = "any"
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,11 +225,41 @@ class FieldInfo:
 
     title: str | None = None
     description: str | None = None
-    frozen: bool = False
-    internal: bool = False
-    masked: bool = False
-    display: bool = False
-    empty_values: tuple[Any, ...] = ()
+    traits: tuple[FieldTrait, ...] = ()
+
+    def has_trait(self, trait_type: type[FieldTrait]) -> bool:
+        """Return whether this field contains the requested trait type."""
+
+        return any(isinstance(trait, trait_type) for trait in self.traits)
+
+    def get_trait(self, trait_type: type[_FieldTraitT]) -> _FieldTraitT | None:
+        """Return the first matching trait instance."""
+
+        for trait in self.traits:
+            if isinstance(trait, trait_type):
+                return trait
+        return None
+
+    @property
+    def frozen(self) -> bool:
+        return self.has_trait(ReadOnly)
+
+    @property
+    def internal(self) -> bool:
+        return self.has_trait(Internal)
+
+    @property
+    def masked(self) -> bool:
+        return self.has_trait(Masked)
+
+    @property
+    def display(self) -> bool:
+        return self.has_trait(Display)
+
+    @property
+    def empty_values(self) -> tuple[Any, ...]:
+        masked = self.get_trait(Masked)
+        return masked.empty_values if masked is not None else ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,10 +310,10 @@ _UNSET = object()
 
 
 def _warn_field_conflict(message: str) -> None:
-    warnings.warn(message, UserWarning, stacklevel=3)
+    warnings.warn(message, FieldConfigurationWarning, stacklevel=3)
 
 
-def object_field(*,
+def object_field(*traits: FieldTrait,
                  default: Any = MISSING,
                  default_factory: Any = MISSING,
                  init: bool | object = _UNSET,
@@ -332,6 +402,11 @@ def object_field(*,
     resolved_repr = True if repr is _UNSET else bool(repr)
     resolved_compare = True if compare is _UNSET else bool(compare)
 
+    frozen = frozen or any(isinstance(trait, ReadOnly) for trait in traits)
+    internal = internal or any(isinstance(trait, Internal) for trait in traits)
+    masked = masked or any(isinstance(trait, Masked) for trait in traits)
+    display = display or any(isinstance(trait, Display) for trait in traits)
+
     if internal:
         if init is not _UNSET and resolved_init:
             _warn_field_conflict("Internal fields cannot be constructor parameters; init=True was ignored.")
@@ -351,50 +426,76 @@ def object_field(*,
             _warn_field_conflict("Masked fields cannot appear in the dataclass repr; repr=True was ignored.")
         resolved_repr = False
 
+    normalized_traits: list[FieldTrait] = list(traits)
+    if frozen and not any(isinstance(trait, ReadOnly) for trait in normalized_traits):
+        normalized_traits.append(ReadOnly())
+    if internal and not any(isinstance(trait, Internal) for trait in normalized_traits):
+        normalized_traits.append(Internal())
+    if display and not any(isinstance(trait, Display) for trait in normalized_traits):
+        normalized_traits.append(Display())
+    if masked and not any(isinstance(trait, Masked) for trait in normalized_traits):
+        normalized_traits.append(Masked(tuple(empty_values)))
+    elif empty_values:
+        masked_trait = next((trait for trait in normalized_traits if isinstance(trait, Masked)), None)
+        if masked_trait is None:
+            warnings.warn("empty_values has no effect without Masked(); the values were ignored.",
+                          FieldConfigurationWarning,
+                          stacklevel=2)
+        elif not masked_trait.empty_values:
+            normalized_traits = [Masked(tuple(empty_values)) if trait is masked_trait else trait
+                                 for trait in normalized_traits]
+
+    duplicate_types = [trait_type.__name__ for trait_type in {type(trait) for trait in normalized_traits}
+                       if sum(isinstance(item, trait_type) for item in normalized_traits) > 1]
+    if duplicate_types:
+        raise ValueError(f"Field traits cannot be repeated: {', '.join(sorted(duplicate_types))}.")
+
+    frozen = any(isinstance(trait, ReadOnly) for trait in normalized_traits)
+    internal = any(isinstance(trait, Internal) for trait in normalized_traits)
+    masked = any(isinstance(trait, Masked) for trait in normalized_traits)
+    display = any(isinstance(trait, Display) for trait in normalized_traits)
+
     info = FieldInfo(title=title,
                      description=description,
-                     frozen=frozen,
-                     internal=internal,
-                     masked=masked,
-                     display=display,
-                     empty_values=tuple(empty_values))
+                     traits=tuple(normalized_traits))
     field_metadata = dict(metadata or {})
     if FIELD_INFO_METADATA_KEY in field_metadata:
         raise ValueError(f"metadata key {FIELD_INFO_METADATA_KEY!r} is reserved by the framework.")
     field_metadata[FIELD_INFO_METADATA_KEY] = info
 
-    return field(default=default,
-                 default_factory=default_factory,
-                 init=resolved_init,
-                 repr=resolved_repr,
-                 hash=hash,
-                 compare=resolved_compare,
-                 metadata=field_metadata,
-                 kw_only=kw_only)
+    return dataclass_field(default=default,
+                           default_factory=default_factory,
+                           init=resolved_init,
+                           repr=resolved_repr,
+                           hash=hash,
+                           compare=resolved_compare,
+                           metadata=field_metadata,
+                           kw_only=kw_only)
 
 
 def read_only_field(**kwargs: Any) -> Field[Any]:
-    """Define a public field that becomes read-only after initialization."""
+    """Deprecated compatibility wrapper for ``field(ReadOnly(), ...)``."""
 
-    return object_field(frozen=True, **kwargs)
+    return object_field(ReadOnly(), **kwargs)
 
 
 def internal_field(**kwargs: Any) -> Field[Any]:
-    """Define an implementation-only field excluded from public dataclass APIs."""
+    """Deprecated compatibility wrapper for ``field(Internal(), ...)``."""
 
-    return object_field(internal=True, **kwargs)
+    return object_field(Internal(), **kwargs)
 
 
 def display_field(**kwargs: Any) -> Field[Any]:
-    """Define a field included in the concise object representation."""
+    """Deprecated compatibility wrapper for ``field(Display(), ...)``."""
 
-    return object_field(display=True, **kwargs)
+    return object_field(Display(), **kwargs)
 
 
 def masked_field(**kwargs: Any) -> Field[Any]:
-    """Define a field whose actual value is hidden in visual output and logs."""
+    """Deprecated compatibility wrapper for ``field(Display(), Masked(), ...)``."""
 
-    return object_field(masked=True, display=True, **kwargs)
+    empty_values = tuple(kwargs.pop("empty_values", ()))
+    return object_field(Display(), Masked(empty_values), **kwargs)
 
 
 def computed_field(*,
@@ -450,13 +551,18 @@ def computed_field(*,
         _warn_field_conflict("Internal computed fields cannot be display fields; display=True was ignored.")
         display = False
 
+    computed_traits: list[FieldTrait] = []
+    if frozen:
+        computed_traits.append(ReadOnly())
+    if internal:
+        computed_traits.append(Internal())
+    if masked:
+        computed_traits.append(Masked(tuple(empty_values)))
+    if display:
+        computed_traits.append(Display())
     info = ComputedFieldInfo(title=title,
                              description=description,
-                             frozen=frozen,
-                             internal=internal,
-                             masked=masked,
-                             display=display,
-                             empty_values=tuple(empty_values),
+                             traits=tuple(computed_traits),
                              as_property=as_property)
 
     def decorator(func: Callable[..., Any]) -> property | Callable[..., Any]:
@@ -478,7 +584,10 @@ def get_object_fields(obj_or_cls: Any,
                       masked: bool | None = None,
                       internal: bool | None = None,
                       frozen: bool | None = None,
-                      computed: bool | None = None) -> tuple[ObjectFieldDefinition, ...]:
+                      computed: bool | None = None,
+                      traits: tuple[type[FieldTrait], ...] = (),
+                      exclude_traits: tuple[type[FieldTrait], ...] = (),
+                      match: FieldMatch = FieldMatch.ALL) -> tuple[ObjectFieldDefinition, ...]:
     """
     Query stored and computed fields through one stable interface.
 
@@ -563,6 +672,14 @@ def get_object_fields(obj_or_cls: Any,
             return False
         if frozen is not None and item.info.frozen is not frozen:
             return False
+        if traits:
+            results = tuple(item.info.has_trait(trait_type) for trait_type in traits)
+            if match is FieldMatch.ALL and not all(results):
+                return False
+            if match is FieldMatch.ANY and not any(results):
+                return False
+        if any(item.info.has_trait(trait_type) for trait_type in exclude_traits):
+            return False
         return True
 
     return tuple(item for item in result if matches(item))
@@ -588,6 +705,15 @@ class _SensitiveValueRegistry:
     def clear(self) -> None:
         with self._lock:
             self._values.clear()
+
+    def rebuild(self, objects: Iterable[BaseObject], mode: SensitiveValueFilterMode) -> None:
+        """Rebuild cached values from the supplied object snapshot."""
+
+        self.clear()
+        if mode is SensitiveValueFilterMode.DISABLED:
+            return
+        for obj in objects:
+            obj._register_masked_fields(include_computed=mode is SensitiveValueFilterMode.FIELDS_AND_COMPUTED)
 
     def register(self,
                  value: Any) -> None:
@@ -616,23 +742,23 @@ class _SensitiveValueRegistry:
                             key=len,
                             reverse=True)
         for token in tokens:
-            value = value.replace(token, MASKED_FIELD_VALUE)
+            value = value.replace(token, _field_framework_config().masked_value)
         return value
 
     def sanitize(self,
                  value: Any) -> Any:
-        if SENSITIVE_VALUE_FILTER_MODE is SensitiveValueFilterMode.DISABLED:
+        if _masking_framework_config().mode is SensitiveValueFilterMode.DISABLED or not _masking_framework_config().enabled:
             return value
         with self._lock:
             tokens = set(self._values)
         if isinstance(value, str):
             if value in tokens:
-                return MASKED_FIELD_VALUE
+                return _field_framework_config().masked_value
             return self.redact_text(value)
         if isinstance(value, bytes):
             decoded = value.decode(errors="replace")
             if decoded in tokens:
-                return MASKED_FIELD_VALUE.encode()
+                return _field_framework_config().masked_value.encode()
             return self.redact_text(decoded).encode()
         if isinstance(value, tuple):
             return tuple(self.sanitize(item) for item in value)
@@ -641,28 +767,61 @@ class _SensitiveValueRegistry:
         if isinstance(value, dict):
             return {self.sanitize(key): self.sanitize(item) for key, item in value.items()}
         if str(value) in tokens:
-            return MASKED_FIELD_VALUE
+            return _field_framework_config().masked_value
         return value
 
 
-_sensitive_values = _SensitiveValueRegistry()
+_bootstrap_sensitive_values = _SensitiveValueRegistry()
+
+
+def _sensitive_value_registry() -> _SensitiveValueRegistry:
+    registry = globals().get("object_registry")
+    return registry._sensitive_values if registry is not None else _bootstrap_sensitive_values
+
 
 
 class _MaskedValueFilter(logging.Filter):
     """Redact cached sensitive values before a managed handler formats them."""
 
+    def __init__(self, logger: ObjectLogger | None = None, channel: str = "custom") -> None:
+        super().__init__()
+        self._logger = logger
+        self._channel = channel
+
     def filter(self,
                record: logging.LogRecord) -> bool:
-        record.msg = _sensitive_values.sanitize(record.msg)
-        record.args = _sensitive_values.sanitize(record.args)
+        global_config = _masking_framework_config()
+        channel_enabled = {"console": global_config.console,
+                           "file": global_config.file,
+                           "custom": global_config.custom_handlers}.get(self._channel, global_config.enabled)
+        if not global_config.enabled or not channel_enabled:
+            return True
+        if self._logger is not None and not self._logger._masking_enabled(self._channel):
+            if global_config.enforced:
+                warnings.warn("A local logger configuration attempted to disable enforced sensitive-value masking.",
+                              SensitiveValueWarning,
+                              stacklevel=2)
+            else:
+                return True
+        record.msg = _sensitive_value_registry().sanitize(record.msg)
+        record.args = _sensitive_value_registry().sanitize(record.args)
         if hasattr(record, "log_context_data"):
-            record.log_context_data = _sensitive_values.sanitize(record.log_context_data)
+            record.log_context_data = _sensitive_value_registry().sanitize(record.log_context_data)
         if hasattr(record, "log_context_values"):
-            record.log_context_values = _sensitive_values.sanitize(record.log_context_values)
+            record.log_context_values = _sensitive_value_registry().sanitize(record.log_context_values)
         return True
 
 
-_masked_value_filter = _MaskedValueFilter()
+
+
+def _field_framework_config() -> FieldFrameworkConfig:
+    registry = globals().get("object_registry")
+    return registry.config.fields if registry is not None else FieldFrameworkConfig()
+
+
+def _masking_framework_config() -> MaskingFrameworkConfig:
+    registry = globals().get("object_registry")
+    return registry.config.logging.masking if registry is not None else MaskingFrameworkConfig()
 
 
 def _values_equal(value: Any,
@@ -678,7 +837,7 @@ def _values_equal(value: Any,
 
 def _masked_value_is_set(value: Any,
                          empty_values: Iterable[Any] = ()) -> bool:
-    candidates = (*DEFAULT_EMPTY_FIELD_VALUES, *tuple(empty_values))
+    candidates = (*_field_framework_config().empty_values, *tuple(empty_values))
     return not any(_values_equal(value, candidate) for candidate in candidates)
 
 
@@ -687,28 +846,16 @@ def _format_display_value(value: Any,
                           masked: bool = False,
                           empty_values: Iterable[Any] = ()) -> str:
     if masked:
-        return MASKED_FIELD_VALUE if _masked_value_is_set(value, empty_values) else NOT_SET_FIELD_VALUE
+        return _field_framework_config().masked_value if _masked_value_is_set(value, empty_values) else _field_framework_config().not_set_value
     return _format_log_value(value)
 
 
 def refresh_sensitive_values() -> None:
-    """
-    Rebuild the global sensitive-value cache from all instantiated objects.
+    """Rebuild the registry-owned sensitive-value cache immediately."""
 
-    Use this after changing ``SENSITIVE_VALUE_FILTER_MODE`` at runtime.
-
-    :return:
-        Returns None.
-    """
-
-    _sensitive_values.clear()
-    if SENSITIVE_VALUE_FILTER_MODE is SensitiveValueFilterMode.DISABLED:
-        return
     registry = globals().get("object_registry")
-    if registry is None:
-        return
-    for instance in registry.instances():
-        instance._register_masked_fields()
+    if registry is not None:
+        registry._sensitive_values.rebuild(registry.instances(), registry.config.logging.masking.mode)
 
 
 # ---------------------------------------------------------------------------
@@ -719,6 +866,7 @@ class LoggerConfigValue(Enum):
     """Special values used by inheritable logger-configuration attributes."""
 
     INHERIT = "inherit"
+    AUTO = "auto"
 
 
 class LoggerParent(Enum):
@@ -727,6 +875,115 @@ class LoggerParent(Enum):
     OBJECT_PARENT = "object_parent"
     ROOT = "root"
     NONE = "none"
+
+
+class RegistryConfigChange(Enum):
+    """Identify runtime work required after a registry configuration change."""
+
+    FIELD_RENDERING = "field_rendering"
+    SENSITIVE_VALUES = "sensitive_values"
+    LOGGER_TREE = "logger_tree"
+    WARNING_CAPTURE = "warning_capture"
+
+
+class _ObservableConfig:
+    _on_change: Callable[[RegistryConfigChange], None] | None = None
+    _change_kind: RegistryConfigChange | None = None
+    _ready: bool = False
+
+    def _finish_init(self, on_change: Callable[[RegistryConfigChange], None] | None, change_kind: RegistryConfigChange) -> None:
+        object.__setattr__(self, "_on_change", on_change)
+        object.__setattr__(self, "_change_kind", change_kind)
+        object.__setattr__(self, "_ready", True)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        object.__setattr__(self, name, value)
+        if name.startswith("_") or not getattr(self, "_ready", False):
+            return
+        callback = getattr(self, "_on_change", None)
+        change_kind = getattr(self, "_change_kind", None)
+        if callback is not None and change_kind is not None:
+            callback(change_kind)
+
+
+@dataclass(slots=True)
+class FieldFrameworkConfig(_ObservableConfig):
+    masked_value: str = _DEFAULT_MASKED_FIELD_VALUE
+    not_set_value: str = _DEFAULT_NOT_SET_FIELD_VALUE
+    empty_values: tuple[Any, ...] = _DEFAULT_EMPTY_FIELD_VALUES
+
+    def __post_init__(self) -> None:
+        self._finish_init(None, RegistryConfigChange.FIELD_RENDERING)
+
+
+@dataclass(slots=True)
+class MaskingFrameworkConfig(_ObservableConfig):
+    enabled: bool = True
+    enforced: bool = False
+    console: bool = True
+    file: bool = True
+    custom_handlers: bool = True
+    mode: SensitiveValueFilterMode = SensitiveValueFilterMode.FIELDS
+
+    def __post_init__(self) -> None:
+        self._finish_init(None, RegistryConfigChange.SENSITIVE_VALUES)
+
+
+@dataclass(slots=True)
+class WarningFrameworkConfig(_ObservableConfig):
+    capture: bool = False
+    parent: LoggerParent | str = LoggerParent.ROOT
+
+    def __post_init__(self) -> None:
+        self._finish_init(None, RegistryConfigChange.WARNING_CAPTURE)
+
+
+@dataclass(slots=True)
+class LoggingFrameworkConfig:
+    masking: MaskingFrameworkConfig = dataclass_field(default_factory=MaskingFrameworkConfig)
+    warnings: WarningFrameworkConfig = dataclass_field(default_factory=WarningFrameworkConfig)
+
+
+class ObjectRegistryConfig:
+    def __init__(self, on_change: Callable[[RegistryConfigChange], None]):
+        self.fields = FieldFrameworkConfig()
+        self.logging = LoggingFrameworkConfig()
+        self._on_change = on_change
+        self._batch_depth = 0
+        self._auto_apply = True
+        self._pending: set[RegistryConfigChange] = set()
+        self._bind_children()
+
+    def _bind_children(self) -> None:
+        self.fields._finish_init(self._mark_changed, RegistryConfigChange.FIELD_RENDERING)
+        self.logging.masking._finish_init(self._mark_changed, RegistryConfigChange.SENSITIVE_VALUES)
+        self.logging.warnings._finish_init(self._mark_changed, RegistryConfigChange.WARNING_CAPTURE)
+
+    def _mark_changed(self, change: RegistryConfigChange) -> None:
+        self._pending.add(change)
+        if self._batch_depth == 0 and self._auto_apply:
+            self.apply()
+
+    @contextmanager
+    def batch_update(self, *, apply: bool = True) -> Iterator[ObjectRegistryConfig]:
+        previous_auto_apply = self._auto_apply
+        self._batch_depth += 1
+        self._auto_apply = apply
+        try:
+            yield self
+        finally:
+            self._batch_depth -= 1
+            self._auto_apply = previous_auto_apply
+            if self._batch_depth == 0 and apply:
+                self.apply()
+
+    def apply(self) -> None:
+        order = (RegistryConfigChange.FIELD_RENDERING, RegistryConfigChange.SENSITIVE_VALUES,
+                 RegistryConfigChange.WARNING_CAPTURE, RegistryConfigChange.LOGGER_TREE)
+        pending = tuple(change for change in order if change in self._pending)
+        self._pending.clear()
+        for change in pending:
+            self._on_change(change)
 
 
 class ObjectStatus(Enum):
@@ -773,6 +1030,9 @@ class _ResolvedLoggerContextConfig:
     format: str
     console_format: str
     file_format: str
+    masking: bool
+    console_masking: bool
+    file_masking: bool
 
 
 @dataclass(slots=True)
@@ -781,20 +1041,23 @@ class LoggerContextConfig:
 
     status: LoggerContextStatus = LoggerContextStatus.CONFIGURED
     level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT
-    console_level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT
-    file_level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT
+    console_level: int | str | LoggerConfigValue = LoggerConfigValue.AUTO
+    file_level: int | str | LoggerConfigValue = LoggerConfigValue.AUTO
     format: str | LoggerConfigValue = LoggerConfigValue.INHERIT
-    console_format: str | LoggerConfigValue = LoggerConfigValue.INHERIT
-    file_format: str | LoggerConfigValue = LoggerConfigValue.INHERIT
+    console_format: str | LoggerConfigValue = LoggerConfigValue.AUTO
+    file_format: str | LoggerConfigValue = LoggerConfigValue.AUTO
+    masking: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
+    console_masking: bool | LoggerConfigValue = LoggerConfigValue.AUTO
+    file_masking: bool | LoggerConfigValue = LoggerConfigValue.AUTO
 
-    _on_change: Callable[[], None] | None = field(default=None,
-                                                  init=False,
-                                                  repr=False,
-                                                  compare=False)
-    _notifications_enabled: bool = field(default=False,
-                                         init=False,
-                                         repr=False,
-                                         compare=False)
+    _on_change: Callable[[], None] | None = dataclass_field(default=None,
+                                                            init=False,
+                                                            repr=False,
+                                                            compare=False)
+    _notifications_enabled: bool = dataclass_field(default=False,
+                                                   init=False,
+                                                   repr=False,
+                                                   compare=False)
 
     def __post_init__(self) -> None:
         self._validate()
@@ -818,11 +1081,14 @@ class LoggerContextConfig:
     def configure(self,
                   *,
                   level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT,
-                  console_level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT,
-                  file_level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT,
+                  console_level: int | str | LoggerConfigValue = LoggerConfigValue.AUTO,
+                  file_level: int | str | LoggerConfigValue = LoggerConfigValue.AUTO,
                   format: str | LoggerConfigValue = LoggerConfigValue.INHERIT,
-                  console_format: str | LoggerConfigValue = LoggerConfigValue.INHERIT,
-                  file_format: str | LoggerConfigValue = LoggerConfigValue.INHERIT) -> None:
+                  console_format: str | LoggerConfigValue = LoggerConfigValue.AUTO,
+                  file_format: str | LoggerConfigValue = LoggerConfigValue.AUTO,
+                  masking: bool | LoggerConfigValue = LoggerConfigValue.INHERIT,
+                  console_masking: bool | LoggerConfigValue = LoggerConfigValue.AUTO,
+                  file_masking: bool | LoggerConfigValue = LoggerConfigValue.AUTO) -> None:
         """Apply context-specific level and format overrides."""
 
         values = {"level": level,
@@ -830,7 +1096,10 @@ class LoggerContextConfig:
                   "file_level": file_level,
                   "format": format,
                   "console_format": console_format,
-                  "file_format": file_format}
+                  "file_format": file_format,
+                  "masking": masking,
+                  "console_masking": console_masking,
+                  "file_masking": file_masking}
         for name, value in values.items():
             self._validate_value(name, value)
         object.__setattr__(self, "status", LoggerContextStatus.CONFIGURED)
@@ -840,7 +1109,7 @@ class LoggerContextConfig:
 
     def inherit(self) -> None:
         object.__setattr__(self, "status", LoggerContextStatus.INHERIT)
-        for name in ("level", "console_level", "file_level", "format", "console_format", "file_format"):
+        for name in ("level", "console_level", "file_level", "format", "console_format", "file_format", "masking", "console_masking", "file_masking"):
             object.__setattr__(self, name, LoggerConfigValue.INHERIT)
         self._notify()
 
@@ -871,6 +1140,14 @@ class LoggerContextConfig:
                 raise LoggerConfigurationError("A stored logging context must use INHERIT, CONFIGURED, or DISABLED.")
             return
         if value is LoggerConfigValue.INHERIT:
+            return
+        if value is LoggerConfigValue.AUTO:
+            if name in {"console_level", "file_level", "console_format", "file_format", "console_masking", "file_masking"}:
+                return
+            raise LoggerConfigurationError(f"{name} cannot use LoggerConfigValue.AUTO.")
+        if name in {"masking", "console_masking", "file_masking"}:
+            if not isinstance(value, bool):
+                raise LoggerConfigurationError(f"{name} must be bool, INHERIT, or AUTO.")
             return
         if name.endswith("format") or name == "format":
             if not isinstance(value, str):
@@ -924,11 +1201,14 @@ class ObjectLoggerContexts:
                   name: str,
                   *,
                   level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT,
-                  console_level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT,
-                  file_level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT,
+                  console_level: int | str | LoggerConfigValue = LoggerConfigValue.AUTO,
+                  file_level: int | str | LoggerConfigValue = LoggerConfigValue.AUTO,
                   format: str | LoggerConfigValue = LoggerConfigValue.INHERIT,
-                  console_format: str | LoggerConfigValue = LoggerConfigValue.INHERIT,
-                  file_format: str | LoggerConfigValue = LoggerConfigValue.INHERIT) -> LoggerContextConfig:
+                  console_format: str | LoggerConfigValue = LoggerConfigValue.AUTO,
+                  file_format: str | LoggerConfigValue = LoggerConfigValue.AUTO,
+                  masking: bool | LoggerConfigValue = LoggerConfigValue.INHERIT,
+                  console_masking: bool | LoggerConfigValue = LoggerConfigValue.AUTO,
+                  file_masking: bool | LoggerConfigValue = LoggerConfigValue.AUTO) -> LoggerContextConfig:
         """Create or replace one context configuration."""
 
         entry = LoggerContextConfig(status=LoggerContextStatus.CONFIGURED,
@@ -937,7 +1217,10 @@ class ObjectLoggerContexts:
                                     file_level=file_level,
                                     format=format,
                                     console_format=console_format,
-                                    file_format=file_format)
+                                    file_format=file_format,
+                                    masking=masking,
+                                    console_masking=console_masking,
+                                    file_masking=file_masking)
         self._store(name, entry)
         return entry
 
@@ -1016,7 +1299,10 @@ class ObjectLoggerContexts:
                  default_file_level: int,
                  default_format: str,
                  default_console_format: str,
-                 default_file_format: str) -> dict[str, _ResolvedLoggerContextConfig]:
+                 default_file_format: str,
+                 default_masking: bool,
+                 default_console_masking: bool,
+                 default_file_masking: bool) -> dict[str, _ResolvedLoggerContextConfig]:
         result = dict(parent_contexts)
         for name, entry in self._entries.items():
             parent = parent_contexts.get(name)
@@ -1027,7 +1313,10 @@ class ObjectLoggerContexts:
                                                             file_level=logging.CRITICAL + 1,
                                                             format=default_format,
                                                             console_format=default_console_format,
-                                                            file_format=default_file_format)
+                                                            file_format=default_file_format,
+                                                            masking=default_masking,
+                                                            console_masking=default_console_masking,
+                                                            file_masking=default_file_masking)
                 continue
             if entry.status is LoggerContextStatus.INHERIT:
                 if parent is None:
@@ -1042,13 +1331,19 @@ class ObjectLoggerContexts:
             inherited_format = parent.format if parent is not None else default_format
             inherited_console_format = parent.console_format if parent is not None else default_console_format
             inherited_file_format = parent.file_format if parent is not None else default_file_format
+            inherited_masking = parent.masking if parent is not None else default_masking
+            inherited_console_masking = parent.console_masking if parent is not None else default_console_masking
+            inherited_file_masking = parent.file_masking if parent is not None else default_file_masking
 
             level = inherited_level if entry.level is LoggerConfigValue.INHERIT else ObjectLoggerConfig._normalize_level(entry.level)
-            console_level = level if entry.console_level is LoggerConfigValue.INHERIT and entry.level is not LoggerConfigValue.INHERIT else (inherited_console_level if entry.console_level is LoggerConfigValue.INHERIT else ObjectLoggerConfig._normalize_level(entry.console_level))
-            file_level = level if entry.file_level is LoggerConfigValue.INHERIT and entry.level is not LoggerConfigValue.INHERIT else (inherited_file_level if entry.file_level is LoggerConfigValue.INHERIT else ObjectLoggerConfig._normalize_level(entry.file_level))
+            console_level = level if entry.console_level is LoggerConfigValue.AUTO else (inherited_console_level if entry.console_level is LoggerConfigValue.INHERIT else ObjectLoggerConfig._normalize_level(entry.console_level))
+            file_level = level if entry.file_level is LoggerConfigValue.AUTO else (inherited_file_level if entry.file_level is LoggerConfigValue.INHERIT else ObjectLoggerConfig._normalize_level(entry.file_level))
             common_format = inherited_format if entry.format is LoggerConfigValue.INHERIT else entry.format
-            console_format = common_format if entry.console_format is LoggerConfigValue.INHERIT and entry.format is not LoggerConfigValue.INHERIT else (inherited_console_format if entry.console_format is LoggerConfigValue.INHERIT else entry.console_format)
-            file_format = common_format if entry.file_format is LoggerConfigValue.INHERIT and entry.format is not LoggerConfigValue.INHERIT else (inherited_file_format if entry.file_format is LoggerConfigValue.INHERIT else entry.file_format)
+            console_format = common_format if entry.console_format is LoggerConfigValue.AUTO else (inherited_console_format if entry.console_format is LoggerConfigValue.INHERIT else entry.console_format)
+            file_format = common_format if entry.file_format in {LoggerConfigValue.AUTO, LoggerConfigValue.INHERIT} and entry.format is not LoggerConfigValue.INHERIT else (inherited_file_format if entry.file_format is LoggerConfigValue.INHERIT else entry.file_format)
+            masking = inherited_masking if entry.masking is LoggerConfigValue.INHERIT else bool(entry.masking)
+            console_masking = masking if entry.console_masking is LoggerConfigValue.AUTO else (inherited_console_masking if entry.console_masking is LoggerConfigValue.INHERIT else bool(entry.console_masking))
+            file_masking = masking if entry.file_masking is LoggerConfigValue.AUTO else (inherited_file_masking if entry.file_masking is LoggerConfigValue.INHERIT else bool(entry.file_masking))
 
             result[name] = _ResolvedLoggerContextConfig(disabled=False,
                                                         level=level,
@@ -1056,7 +1351,10 @@ class ObjectLoggerContexts:
                                                         file_level=file_level,
                                                         format=common_format,
                                                         console_format=console_format,
-                                                        file_format=file_format)
+                                                        file_format=file_format,
+                                                        masking=masking,
+                                                        console_masking=console_masking,
+                                                        file_masking=file_masking)
         return result
 
 
@@ -1072,6 +1370,16 @@ class _ResolvedObjectLoggerConfig:
     handler_factories: tuple[Callable[[], logging.Handler], ...]
     formatter: logging.Formatter | None
     format: str
+    show_time: bool
+    show_level: bool
+    show_name: bool
+    show_status: bool
+    show_context: bool
+    show_context_data: bool
+    masking: bool
+    console_masking: bool
+    file_masking: bool
+    custom_handler_masking: bool
 
     console: bool
     console_level: int
@@ -1108,6 +1416,16 @@ class ObjectLoggerConfig:
     handler_factories: tuple[Callable[[], logging.Handler], ...] | LoggerConfigValue = LoggerConfigValue.INHERIT
     formatter: logging.Formatter | None | LoggerConfigValue = LoggerConfigValue.INHERIT
     format: str | LoggerConfigValue = LoggerConfigValue.INHERIT
+    show_time: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
+    show_level: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
+    show_name: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
+    show_status: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
+    show_context: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
+    show_context_data: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
+    masking: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
+    console_masking: bool | LoggerConfigValue = LoggerConfigValue.AUTO
+    file_masking: bool | LoggerConfigValue = LoggerConfigValue.AUTO
+    custom_handler_masking: bool | LoggerConfigValue = LoggerConfigValue.AUTO
 
     console: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
     console_level: int | str | None | LoggerConfigValue = LoggerConfigValue.INHERIT
@@ -1128,16 +1446,16 @@ class ObjectLoggerConfig:
     file_delay: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
     file_archive_backup_count: int | LoggerConfigValue = LoggerConfigValue.INHERIT
 
-    contexts: ObjectLoggerContexts = field(default_factory=ObjectLoggerContexts)
+    contexts: ObjectLoggerContexts = dataclass_field(default_factory=ObjectLoggerContexts)
 
-    _on_change: Callable[[], None] | None = field(default=None,
-                                                  init=False,
-                                                  repr=False,
-                                                  compare=False)
-    _notifications_enabled: bool = field(default=False,
-                                         init=False,
-                                         repr=False,
-                                         compare=False)
+    _on_change: Callable[[], None] | None = dataclass_field(default=None,
+                                                            init=False,
+                                                            repr=False,
+                                                            compare=False)
+    _notifications_enabled: bool = dataclass_field(default=False,
+                                                   init=False,
+                                                   repr=False,
+                                                   compare=False)
 
     def __post_init__(self) -> None:
         """
@@ -1255,22 +1573,53 @@ class ObjectLoggerConfig:
         base_level = self._normalize_level(base_level_value if base_level_value is not None else logging.NOTSET)
 
         console_level_value = inherited("console_level")
-        if self.console_level is LoggerConfigValue.INHERIT and self.level is not LoggerConfigValue.INHERIT:
+        if self.console_level is LoggerConfigValue.AUTO:
             console_level_value = base_level
         resolved_console_level = self._normalize_level(console_level_value if console_level_value is not None else base_level)
 
         file_level_value = inherited("file_level")
-        if self.file_level is LoggerConfigValue.INHERIT and self.level is not LoggerConfigValue.INHERIT:
+        if self.file_level is LoggerConfigValue.AUTO:
             file_level_value = base_level
         resolved_file_level = self._normalize_level(file_level_value if file_level_value is not None else base_level)
 
-        common_format = inherited("format")
-        console_format = (common_format
-                          if self.console_format is LoggerConfigValue.INHERIT and self.format is not LoggerConfigValue.INHERIT
-                          else inherited("console_format"))
-        file_format = (common_format
-                       if self.file_format is LoggerConfigValue.INHERIT and self.format is not LoggerConfigValue.INHERIT
-                       else inherited("file_format"))
+        show_time = bool(inherited("show_time"))
+        show_level = bool(inherited("show_level"))
+        show_name = bool(inherited("show_name"))
+        show_status = bool(inherited("show_status"))
+        show_context = bool(inherited("show_context"))
+        show_context_data = bool(inherited("show_context_data"))
+
+        def automatic_format(channel: str) -> str:
+            parts: list[str] = []
+            if show_time:
+                parts.append("%(asctime)s")
+            if show_level:
+                parts.append("[%(levelname)s]")
+            if show_status:
+                parts.append("[%(object_status)s]")
+            if show_context:
+                parts.append("[%(log_context)s]")
+            if show_name:
+                parts.append("%(name)s:")
+            parts.append("%(message)s")
+            if show_context_data:
+                parts.append("| %(log_context_data)s")
+            return " ".join(parts)
+
+        common_format_value = inherited("format")
+        common_format = automatic_format("common") if common_format_value is LoggerConfigValue.AUTO else common_format_value
+        console_value = inherited("console_format")
+        console_format = common_format if console_value is LoggerConfigValue.AUTO else console_value
+        file_value = inherited("file_format")
+        file_format = common_format if file_value is LoggerConfigValue.AUTO else file_value
+
+        resolved_masking = bool(inherited("masking"))
+        console_masking_value = inherited("console_masking")
+        resolved_console_masking = resolved_masking if console_masking_value is LoggerConfigValue.AUTO else bool(console_masking_value)
+        file_masking_value = inherited("file_masking")
+        resolved_file_masking = resolved_masking if file_masking_value is LoggerConfigValue.AUTO else bool(file_masking_value)
+        custom_masking_value = inherited("custom_handler_masking")
+        resolved_custom_masking = resolved_masking if custom_masking_value is LoggerConfigValue.AUTO else bool(custom_masking_value)
 
         resolved_contexts = self.contexts._resolve(parent_config.contexts if parent_config is not None else {},
                                                    default_level=base_level,
@@ -1278,7 +1627,10 @@ class ObjectLoggerConfig:
                                                    default_file_level=resolved_file_level,
                                                    default_format=common_format,
                                                    default_console_format=console_format,
-                                                   default_file_format=file_format)
+                                                   default_file_format=file_format,
+                                                   default_masking=resolved_masking,
+                                                   default_console_masking=resolved_console_masking,
+                                                   default_file_masking=resolved_file_masking)
         technical_levels = [base_level]
         if inherited("console"):
             technical_levels.append(resolved_console_level)
@@ -1299,6 +1651,16 @@ class ObjectLoggerConfig:
                                            handler_factories=inherited("handler_factories"),
                                            formatter=inherited("formatter"),
                                            format=common_format,
+                                           show_time=show_time,
+                                           show_level=show_level,
+                                           show_name=show_name,
+                                           show_status=show_status,
+                                           show_context=show_context,
+                                           show_context_data=show_context_data,
+                                           masking=resolved_masking,
+                                           console_masking=resolved_console_masking,
+                                           file_masking=resolved_file_masking,
+                                           custom_handler_masking=resolved_custom_masking,
                                            console=inherited("console"),
                                            console_level=resolved_console_level,
                                            console_format=console_format,
@@ -1335,6 +1697,16 @@ class ObjectLoggerConfig:
                                            handler_factories=(),
                                            formatter=None,
                                            format="%(message)s",
+                                           show_time=True,
+                                           show_level=True,
+                                           show_name=True,
+                                           show_status=True,
+                                           show_context=True,
+                                           show_context_data=True,
+                                           masking=True,
+                                           console_masking=True,
+                                           file_masking=True,
+                                           custom_handler_masking=True,
                                            console=False,
                                            console_level=logging.NOTSET,
                                            console_format="[%(object_status)s] [%(log_context)s] %(message)s",
@@ -1402,6 +1774,11 @@ class ObjectLoggerConfig:
             if name == "parent":
                 raise LoggerConfigurationError("parent cannot use LoggerConfigValue.INHERIT.")
             return
+        if value is LoggerConfigValue.AUTO:
+            if name not in {"format", "console_level", "file_level", "console_format", "file_format",
+                            "console_masking", "file_masking", "custom_handler_masking"}:
+                raise LoggerConfigurationError(f"{name} cannot use LoggerConfigValue.AUTO.")
+            return
         if name == "logger_class":
             if not isinstance(value, type) or not issubclass(value, ObjectLogger):
                 raise LoggerConfigurationError(f"logger_class must inherit from {ObjectLogger.__name__}, got {value!r}.")
@@ -1416,7 +1793,10 @@ class ObjectLoggerConfig:
             if not isinstance(value, ObjectLoggerContexts):
                 raise LoggerConfigurationError("contexts must be an ObjectLoggerContexts instance.")
             return
-        boolean_fields = {"propagate", "disabled", "console", "console_rich_show_time",
+        boolean_fields = {"propagate", "disabled", "show_time", "show_level", "show_name",
+                          "show_status", "show_context", "show_context_data", "masking",
+                          "console_masking", "file_masking", "custom_handler_masking",
+                          "console", "console_rich_show_time",
                           "console_rich_markup", "console_rich_show_level", "console_rich_show_path",
                           "file", "file_delay"}
         if name in boolean_fields and not isinstance(value, bool):
@@ -1776,6 +2156,25 @@ class ObjectLogger(logging.Logger):
                                             for key, value in context_values.items()) or "-"
         return record
 
+    def _masking_enabled(self, channel: str) -> bool:
+        """Return the effective masking state for the active context and channel."""
+
+        context = self._active_context_config()
+        if context is not None:
+            if channel == "console":
+                return context.console_masking
+            if channel == "file":
+                return context.file_masking
+            return context.masking
+        config = self._resolved_config
+        if config is None:
+            return True
+        if channel == "console":
+            return config.console_masking
+        if channel == "file":
+            return config.file_masking
+        return config.custom_handler_masking
+
     def configure(self,
                   config: _ResolvedObjectLoggerConfig,
                   parent_logger: logging.Logger | None,
@@ -1865,7 +2264,7 @@ class ObjectLogger(logging.Logger):
         for handler in configured_handlers:
             if not any(isinstance(filter_, _MaskedValueFilter)
                        for filter_ in handler.filters):
-                handler.addFilter(_masked_value_filter)
+                handler.addFilter(_MaskedValueFilter(self, "custom"))
             self.addHandler(handler)
             self._managed_handlers.append(handler)
         self._resolved_config = config
@@ -1942,11 +2341,11 @@ class _ObjectRegistration:
 
     # Delayed constructor input for concrete registrations.
     constructor_args: tuple[Any, ...] = ()
-    constructor_kwargs: dict[str, Any] = field(default_factory=dict)
+    constructor_kwargs: dict[str, Any] = dataclass_field(default_factory=dict)
 
     # One template registration may create multiple instances below different
     # concrete parents, therefore instances are indexed by full object path.
-    instances: dict[str, BaseObject] = field(default_factory=dict)
+    instances: dict[str, BaseObject] = dataclass_field(default_factory=dict)
 
     @property
     def instantiated(self) -> bool:
@@ -1992,6 +2391,8 @@ class _ObjectRegistry:
             Returns None.
         """
 
+        self.config = ObjectRegistryConfig(self._apply_config_change)
+        self._sensitive_values = _SensitiveValueRegistry()
         self._registrations_by_name: dict[str, _ObjectRegistration] = {}
         self._registrations_by_class: dict[type[BaseObject], _ObjectRegistration] = {}
         self._instances_by_name: dict[str, BaseObject] = {}
@@ -1999,6 +2400,26 @@ class _ObjectRegistry:
         self._instance_registrations: dict[int, _ObjectRegistration] = {}
         self._building = False
         self._built = False
+
+    def _apply_config_change(self, change: RegistryConfigChange) -> None:
+        """Apply one framework configuration side effect."""
+
+        if change in {RegistryConfigChange.FIELD_RENDERING, RegistryConfigChange.SENSITIVE_VALUES}:
+            self._sensitive_values.rebuild(self.instances(), self.config.logging.masking.mode)
+        if change is RegistryConfigChange.WARNING_CAPTURE:
+            logging.captureWarnings(self.config.logging.warnings.capture)
+            warning_logger = logging.getLogger("py.warnings")
+            parent = self.config.logging.warnings.parent
+            if parent is LoggerParent.ROOT:
+                warning_logger.parent = logging.getLogger()
+            elif parent is LoggerParent.NONE:
+                warning_logger.parent = None
+            elif isinstance(parent, str):
+                warning_logger.parent = logging.getLogger(parent)
+            warning_logger.propagate = warning_logger.parent is not None
+        if change is RegistryConfigChange.LOGGER_TREE and self._built:
+            for root in self.root_objects():
+                root._configure_logger_tree()
 
     def _register(self,
                   *,
@@ -2205,7 +2626,7 @@ class _ObjectRegistry:
 
         temporary_masked_values = self._constructor_masked_values(registration)
         for masked_value in temporary_masked_values:
-            _sensitive_values.register(masked_value)
+            _sensitive_value_registry().register(masked_value)
 
         try:
             # Constructor signatures differ between registered dataclasses. At
@@ -2217,7 +2638,7 @@ class _ObjectRegistry:
                                 f"{registration.cls.__module__}.{registration.cls.__qualname__}: {error}") from error
         finally:
             for masked_value in temporary_masked_values:
-                _sensitive_values.unregister(masked_value)
+                _sensitive_value_registry().unregister(masked_value)
             _construction_context.reset(token)
 
         # Commit the fully initialized instance to all internal indexes only
@@ -3060,6 +3481,9 @@ class _ObjectRegistry:
 # registry instances is intentionally not part of the public API.
 object_registry = _ObjectRegistry()
 
+# Public drop-in replacement for dataclasses.field.
+field = object_field
+
 
 # ---------------------------------------------------------------------------
 # Public object base class
@@ -3167,31 +3591,32 @@ class BaseObject(ABC):
             parts.append(f"{definition.name}={_format_display_value(value, masked=definition.info.masked, empty_values=definition.info.empty_values)}")
         return f"{type(self).__name__}({', '.join(parts)})"
 
-    def _register_masked_fields(self) -> None:
+    def _register_masked_fields(self, *, include_computed: bool | None = None) -> None:
         """Register sensitive values according to the global protection mode."""
 
-        if SENSITIVE_VALUE_FILTER_MODE is SensitiveValueFilterMode.DISABLED:
+        if _masking_framework_config().mode is SensitiveValueFilterMode.DISABLED or not _masking_framework_config().enabled:
             return
-        include_computed = SENSITIVE_VALUE_FILTER_MODE is SensitiveValueFilterMode.FIELDS_AND_COMPUTED
+        if include_computed is None:
+            include_computed = _masking_framework_config().mode is SensitiveValueFilterMode.FIELDS_AND_COMPUTED
         for definition in get_object_fields(self, masked=True, computed=None if include_computed else False):
             try:
                 value = definition.get_value(self)
             except Exception:
                 continue
-            _sensitive_values.register(value)
+            _sensitive_value_registry().register(value)
 
     def _unregister_masked_fields(self) -> None:
         """Remove sensitive values according to the global protection mode."""
 
-        if SENSITIVE_VALUE_FILTER_MODE is SensitiveValueFilterMode.DISABLED:
+        if _masking_framework_config().mode is SensitiveValueFilterMode.DISABLED or not _masking_framework_config().enabled:
             return
-        include_computed = SENSITIVE_VALUE_FILTER_MODE is SensitiveValueFilterMode.FIELDS_AND_COMPUTED
+        include_computed = _masking_framework_config().mode is SensitiveValueFilterMode.FIELDS_AND_COMPUTED
         for definition in get_object_fields(self, masked=True, computed=None if include_computed else False):
             try:
                 value = definition.get_value(self)
             except Exception:
                 continue
-            _sensitive_values.unregister(value)
+            _sensitive_value_registry().unregister(value)
 
     def __setattr__(self,
                     key: str,
@@ -3224,7 +3649,7 @@ class BaseObject(ABC):
         previous_masked_value = MISSING
         refresh_all_sensitive_values = (
                 initialized
-                and SENSITIVE_VALUE_FILTER_MODE is SensitiveValueFilterMode.FIELDS_AND_COMPUTED
+                and _masking_framework_config().mode is SensitiveValueFilterMode.FIELDS_AND_COMPUTED
         )
 
         if initialized:
@@ -3247,8 +3672,8 @@ class BaseObject(ABC):
               and dataclass_field is not None
               and _field_info(dataclass_field).masked):
             if previous_masked_value is not MISSING:
-                _sensitive_values.unregister(previous_masked_value)
-            _sensitive_values.register(value)
+                _sensitive_value_registry().unregister(previous_masked_value)
+            _sensitive_value_registry().register(value)
 
         # Logger configuration fields are intentionally mutable. Reapply the
         # complete configuration after each change so parent linkage, level,
@@ -3766,7 +4191,8 @@ def register(*,
     ...
 
 
-@dataclass_transform(field_specifiers=(object_field,
+@dataclass_transform(field_specifiers=(field,
+                                       object_field,
                                        read_only_field,
                                        internal_field,
                                        display_field,
@@ -3860,7 +4286,7 @@ def _configure_example_bootstrap_logging() -> None:
     console_handler.set_name("example-bootstrap-console")
     console_handler.setLevel(logging.DEBUG)
     console_handler.setFormatter(ObjectLogger.Formatter("%(message)s"))
-    console_handler.addFilter(_masked_value_filter)
+    console_handler.addFilter(_MaskedValueFilter(None, "console"))
     root_logger.addHandler(console_handler)
 
 
@@ -3901,15 +4327,20 @@ class WorkerObjectLogger(ObjectLogger):
 @register(name="application",
           kwargs={"logger_config": ObjectLoggerConfig(parent=LoggerParent.NONE,
                                                       level=logging.DEBUG,
-                                                      format=(
-                                                              "[%(object_status)s] "
-                                                              "[%(log_context)s] "
-                                                              "%(name)s: %(message)s"
-                                                      ),
+                                                      console_level=LoggerConfigValue.AUTO,
+                                                      file_level=LoggerConfigValue.AUTO,
+                                                      format=LoggerConfigValue.AUTO,
+                                                      console_format=LoggerConfigValue.AUTO,
+                                                      file_format=LoggerConfigValue.AUTO,
+                                                      show_time=True,
+                                                      show_level=True,
+                                                      show_name=True,
+                                                      show_status=True,
+                                                      show_context=True,
+                                                      show_context_data=True,
                                                       console=True,
                                                       file=True,
                                                       file_path=_EXAMPLE_LOG_DIRECTORY / "application.log",
-                                                      file_level=logging.DEBUG,
                                                       contexts=ObjectLoggerContexts({
                                                           "task.event": LoggerContextConfig(
                                                               level=logging.INFO,
@@ -3923,10 +4354,11 @@ class WorkerObjectLogger(ObjectLogger):
 class Application(BaseObject):
     """Root object using the central console and application log file."""
 
-    environment: str = display_field(default="development",
-                                     frozen=True,
-                                     title="Environment",
-                                     description="Runtime environment of the application.")
+    environment: str = field(Display(),
+                             ReadOnly(),
+                             default="development",
+                             title="Environment",
+                             description="Runtime environment of the application.")
 
 
 @register(name="database",
@@ -3939,25 +4371,33 @@ class Application(BaseObject):
 class DatabaseService(BaseObject):
     """Service demonstrating display, masked, read-only, and internal fields."""
 
-    host: str = display_field(title="Database host",
-                              description="Hostname or IP address of the database server.")
-    port: int = display_field(title="Database port",
-                              description="TCP port used for database connections.")
-    username: str = display_field(title="Database user",
-                                  description="User name used to authenticate to the database.")
-    password: str = masked_field(title="Database password",
-                                 description="Secret used to authenticate the database user.")
-    optional_token: str | None = masked_field(default=None,
-                                              empty_values=("unset", "disabled"),
-                                              title="Optional token",
-                                              description="Optional secondary credential.")
-    service_id: str = read_only_field(default="database-primary",
-                                      display=True,
-                                      title="Service identifier",
-                                      description="Stable identifier assigned during construction.")
-    _connection_attempts: int = internal_field(default=0,
-                                               title="Connection attempts",
-                                               description="Internal connection-attempt counter.")
+    host: str = field(Display(),
+                      title="Database host",
+                      description="Hostname or IP address of the database server.")
+    port: int = field(Display(),
+                      title="Database port",
+                      description="TCP port used for database connections.")
+    username: str = field(Display(),
+                          title="Database user",
+                          description="User name used to authenticate to the database.")
+    password: str = field(Display(),
+                          Masked(),
+                          title="Database password",
+                          description="Secret used to authenticate the database user.")
+    optional_token: str | None = field(Display(),
+                                       Masked(("unset", "disabled")),
+                                       default=None,
+                                       title="Optional token",
+                                       description="Optional secondary credential.")
+    service_id: str = field(Display(),
+                            ReadOnly(),
+                            default="database-primary",
+                            title="Service identifier",
+                            description="Stable identifier assigned during construction.")
+    _connection_attempts: int = field(Internal(),
+                                      default=0,
+                                      title="Connection attempts",
+                                      description="Internal connection-attempt counter.")
 
     @computed_field(display=True,
                     title="Database endpoint",
