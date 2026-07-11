@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import logging
 import re
 
@@ -27,6 +28,10 @@ class DuplicateRegistrationNameError(RegistryError):
 
 
 class DuplicateObjectNameError(RegistryError):
+    pass
+
+
+class AmbiguousObjectNameError(RegistryError):
     pass
 
 
@@ -75,6 +80,7 @@ class ObjectRegistry:
         self._registrations_by_name: dict[str, ObjectRegistration] = {}
         self._registrations_by_class: dict[type[BaseObject], ObjectRegistration] = {}
         self._instances_by_name: dict[str, BaseObject] = {}
+        self._instances_by_path: dict[str, list[BaseObject]] = {}
         self._instance_registrations: dict[int, ObjectRegistration] = {}
         self._building = False
         self._built = False
@@ -157,7 +163,7 @@ class ObjectRegistry:
         finally:
             _construction_context.reset(token)
         registration.instances[object_name] = instance
-        self._instances_by_name[object_name] = instance
+        self._index_instance(instance)
         self._instance_registrations[id(instance)] = registration
         self._instantiate_children(parent_instance=instance, parent_registration=registration)
         return instance
@@ -286,14 +292,56 @@ class ObjectRegistry:
                     name: str,
                     expected_type: type[T] | None = None) -> BaseObject | T:
         normalized_name = self._normalize_name(name)
-        try:
-            instance = self._instances_by_name[normalized_name]
-        except KeyError:
-            raise KeyError(f"No instantiated object exists as {normalized_name!r}.") from None
+        instance = self._instances_by_name.get(normalized_name)
+        if instance is None:
+            matching_instances = self._instances_by_path.get(normalized_name, [])
+            if expected_type is not None:
+                matching_instances = [matching_instance
+                                      for matching_instance in matching_instances
+                                      if isinstance(matching_instance, expected_type)]
+            if not matching_instances:
+                raise KeyError(f"No instantiated object exists as {normalized_name!r}.")
+            if len(matching_instances) > 1:
+                matching_names = tuple(matching_instance.name for matching_instance in matching_instances)
+                raise AmbiguousObjectNameError(f"Object name {normalized_name!r} is ambiguous. "
+                                               f"Matching objects: {matching_names!r}.")
+            instance = matching_instances[0]
 
         if expected_type is not None and not isinstance(instance, expected_type):
-            raise TypeError(f"Object {normalized_name!r} contains {type(instance).__name__}, not {expected_type.__name__}.")
+            raise TypeError(f"Object {instance.name!r} contains {type(instance).__name__}, not {expected_type.__name__}.")
         return instance
+
+    @overload
+    def find_by_name(self,
+                     pattern: str) -> tuple[BaseObject, ...]:
+        ...
+
+    @overload
+    def find_by_name(self,
+                     pattern: str,
+                     expected_type: type[T]) -> tuple[T, ...]:
+        ...
+
+    def find_by_name(self,
+                     pattern: str,
+                     expected_type: type[T] | None = None) -> tuple[BaseObject, ...] | tuple[T, ...]:
+        normalized_pattern = self._normalize_name(pattern)
+        result: list[BaseObject] = []
+        visited: set[int] = set()
+        for object_path, instances in self._instances_by_path.items():
+            if not self._match_object_path(object_name=object_path, pattern=normalized_pattern):
+                continue
+            for instance in instances:
+                identity = id(instance)
+                if identity in visited:
+                    continue
+                if expected_type is not None and not isinstance(instance, expected_type):
+                    continue
+                visited.add(identity)
+                result.append(instance)
+        if expected_type is not None:
+            return cast(tuple[T, ...], cast(object, tuple(result)))
+        return tuple(result)
 
     @overload
     def get_class(self,
@@ -330,11 +378,19 @@ class ObjectRegistry:
                           parent: BaseObject,
                           name: str) -> BaseObject | None:
         normalized_name = self._normalize_name(name)
-        full_name = f"{parent.name}.{normalized_name}"
+        if normalized_name.startswith(f"{parent.name}."):
+            full_name = normalized_name
+        else:
+            full_name = f"{parent.name}.{normalized_name}"
         obj = self._instances_by_name.get(full_name)
-        if obj is None or obj.parent is not parent:
+        if obj is None:
             return None
-        return obj
+        current = obj.parent
+        while current is not None:
+            if current is parent:
+                return obj
+            current = current.parent
+        return None
 
     def get_children_by_type(self,
                              parent: BaseObject,
@@ -358,18 +414,29 @@ class ObjectRegistry:
             old_parent._children.remove(child)
         old_name = child.name
         new_name = f"{parent.name}.{child.registration_name}"
-        if new_name != old_name and new_name in self._instances_by_name:
-            raise DuplicateObjectNameError(f"Object name {new_name!r} already exists.")
+        subtree = (child, *child.children_flat)
+        old_names = {id(instance): instance.name for instance in subtree}
+        new_names = {id(instance): new_name + instance.name[len(old_name):] for instance in subtree}
+        subtree_ids = {id(instance) for instance in subtree}
+        for instance in subtree:
+            instance_name = new_names[id(instance)]
+            existing = self._instances_by_name.get(instance_name)
+            if existing is not None and id(existing) not in subtree_ids:
+                raise DuplicateObjectNameError(f"Object name {instance_name!r} already exists.")
+        for instance in subtree:
+            self._unindex_instance(instance, object_name=old_names[id(instance)])
         with child._unlocked():
             child.parent = parent
-            child.name = new_name
-        if old_name in self._instances_by_name:
-            del self._instances_by_name[old_name]
-        self._instances_by_name[new_name] = child
-        registration = self._instance_registrations.get(id(child))
-        if registration is not None:
-            registration.instances.pop(old_name, None)
-            registration.instances[new_name] = child
+        for instance in subtree:
+            instance_old_name = old_names[id(instance)]
+            instance_new_name = new_names[id(instance)]
+            with instance._unlocked():
+                instance.name = instance_new_name
+            registration = self._instance_registrations.get(id(instance))
+            if registration is not None:
+                registration.instances.pop(instance_old_name, None)
+                registration.instances[instance_new_name] = instance
+            self._index_instance(instance)
         if child not in parent._children:
             parent._children.append(child)
         return child
@@ -394,6 +461,62 @@ class ObjectRegistry:
     def __iter__(self) -> Iterator[ObjectRegistration]:
         return iter(self._registrations_by_name.values())
 
+    def _index_instance(self,
+                        instance: BaseObject) -> None:
+        self._instances_by_name[instance.name] = instance
+        for object_path in self._get_object_name_paths(instance.name):
+            path_instances = self._instances_by_path.setdefault(object_path, [])
+            if not any(path_instance is instance for path_instance in path_instances):
+                path_instances.append(instance)
+
+    def _unindex_instance(self,
+                          instance: BaseObject,
+                          object_name: str | None = None) -> None:
+        indexed_name = object_name or instance.name
+        if self._instances_by_name.get(indexed_name) is instance:
+            del self._instances_by_name[indexed_name]
+        for object_path in self._get_object_name_paths(indexed_name):
+            path_instances = self._instances_by_path.get(object_path)
+            if path_instances is None:
+                continue
+            self._instances_by_path[object_path] = [path_instance
+                                                    for path_instance in path_instances
+                                                    if path_instance is not instance]
+            path_instances = self._instances_by_path[object_path]
+            if not path_instances:
+                del self._instances_by_path[object_path]
+
+    @staticmethod
+    def _get_object_name_paths(object_name: str) -> tuple[str, ...]:
+        name_parts = object_name.split(".")
+        return tuple(".".join(name_parts[index:]) for index in range(len(name_parts)))
+
+    @staticmethod
+    def _match_object_path(object_name: str,
+                           pattern: str) -> bool:
+        object_parts = object_name.split(".")
+        pattern_parts = pattern.split(".")
+
+        def match(object_index: int,
+                  pattern_index: int) -> bool:
+            if pattern_index == len(pattern_parts):
+                return object_index == len(object_parts)
+            pattern_part = pattern_parts[pattern_index]
+            if pattern_part == "**":
+                if pattern_index == len(pattern_parts) - 1:
+                    return True
+                for next_object_index in range(object_index, len(object_parts) + 1):
+                    if match(next_object_index, pattern_index + 1):
+                        return True
+                return False
+            if object_index >= len(object_parts):
+                return False
+            if not fnmatch.fnmatchcase(object_parts[object_index], pattern_part):
+                return False
+            return match(object_index + 1, pattern_index + 1)
+
+        return match(0, 0)
+
     @classmethod
     def _build_object_name(cls,
                            registration: ObjectRegistration,
@@ -408,6 +531,7 @@ class ObjectRegistry:
         for registration in self._registrations_by_name.values():
             registration.instances.clear()
         self._instances_by_name.clear()
+        self._instances_by_path.clear()
         self._instance_registrations.clear()
         self._built = False
 
@@ -705,16 +829,14 @@ if __name__ == "__main__":
     apache_1 = object_registry.get_by_name("app.apache_1", ApacheRoot)
     apache_2 = object_registry.get_by_name("apache_2", SecondApacheRoot)
 
-    static_files_1 = object_registry.get_by_name("app.apache_1.static_files", StaticFilesApacheObject)
-    static_files_2 = object_registry.get_by_name("apache_2.static_files", StaticFilesApacheObject)
+    static_files_1_a = object_registry.get_by_name("app.apache_1.static_files", StaticFilesApacheObject)
+    static_files_2_a = object_registry.get_by_name("apache_2.static_files", StaticFilesApacheObject)
 
-    print(apache_1.children)
-    print(apache_2.children)
 
-    print(static_files_1.parent is apache_1)
-    print(static_files_2.parent is apache_2)
+    static_files_1_b = apache_1.get_child_by_name("static_files", StaticFilesApacheObject)
+    static_files_2_b = apache_2.get_child_by_name("static_files", StaticFilesApacheObject)
 
-    print(apache_1.get_child_by_name("static_files", StaticFilesApacheObject))
-    print(apache_2.get_child_by_name("static_files", StaticFilesApacheObject))
+    static_files_1_c = object_registry.find_by_name("app.*.static_files", StaticFilesApacheObject)
+    static_files_2_c = object_registry.find_by_name("**.static_files", StaticFilesApacheObject)
 
     print()
