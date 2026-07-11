@@ -6,6 +6,10 @@ if TYPE_CHECKING:
     from admin_helper.objects import BaseObject
 
 
+# ---------------------------------------------------------------------------
+# Base exceptions
+# ---------------------------------------------------------------------------
+
 class AdminHelperException(Exception):
     """Base exception for all application-specific errors."""
 
@@ -13,51 +17,50 @@ class AdminHelperException(Exception):
 class OperatingSystemNotSupportedException(AdminHelperException):
     """Raised when the current operating system is not supported."""
 
-class RegistryError(RuntimeError):
-    """
-    Base exception for registry definition, validation, and build errors.
-    """
+
+# ---------------------------------------------------------------------------
+# Object-registry exceptions
+# ---------------------------------------------------------------------------
+
+class RegistryError(AdminHelperException):
+    """Base exception for registry definition, validation, and build errors."""
 
 
 class DuplicateRegistrationNameError(RegistryError):
-    """
-    Raised when two class definitions use the same registration name.
-    """
+    """Raised when two class definitions use the same registration name."""
 
 
 class DuplicateObjectNameError(RegistryError):
-    """
-    Raised when two instantiated nodes would receive the same full path.
-    """
+    """Raised when two instantiated nodes would receive the same full path."""
 
 
 class AmbiguousObjectNameError(RegistryError):
-    """
-    Raised when a shortened object path identifies multiple instances.
-    """
+    """Raised when a shortened object path identifies multiple instances."""
 
 
 class UnregisteredSubclassError(RegistryError):
-    """
-    Raised when a loaded BaseObject subclass was not decorated.
-    """
+    """Raised when a loaded BaseObject subclass was not decorated."""
 
 
 class ParentResolutionError(RegistryError):
-    """
-    Raised when a configured parent reference cannot be resolved.
-    """
+    """Raised when a configured parent reference cannot be resolved."""
 
 
 class ObjectTreeLoopError(RegistryError):
-    """
-    Raised when a registration or runtime parent relationship forms a cycle.
-    """
+    """Raised when a registration or runtime parent relationship forms a cycle."""
 
+
+# ---------------------------------------------------------------------------
+# Object-logger exceptions
+# ---------------------------------------------------------------------------
 
 class LoggerConfigurationError(AdminHelperException):
-    """Raised when an object-logger configuration is invalid."""
+    """Raised when an object-logger configuration or logging context is invalid."""
 
+
+# ---------------------------------------------------------------------------
+# Broadcast exceptions
+# ---------------------------------------------------------------------------
 
 class BroadcastException(AdminHelperException):
     """Collect one or more errors raised during a tree broadcast."""
@@ -66,6 +69,22 @@ class BroadcastException(AdminHelperException):
                  obj: BaseObject | None = None,
                  method_name: str | None = None,
                  original_exception: Exception | None = None):
+        """
+        Initialize one broadcast error or an aggregate error container.
+
+        :param obj:
+            The object on which the broadcast operation failed.
+
+        :param method_name:
+            The broadcast method that raised the error.
+
+        :param original_exception:
+            The original exception raised by the object method.
+
+        :return:
+            Returns None.
+        """
+
         self.object = obj
         self.method_name = method_name
         self.original_exception = original_exception
@@ -74,7 +93,12 @@ class BroadcastException(AdminHelperException):
 
     @property
     def message(self) -> str:
-        """Build the complete nested broadcast-error message."""
+        """
+        Build the complete nested broadcast-error message.
+
+        :return:
+            Returns the complete aggregated error message.
+        """
 
         parts = [error.message
                  for error in self.errors
@@ -90,6 +114,11 @@ class BroadcastException(AdminHelperException):
         return ", ".join(part for part in parts if part)
 
     def finalize(self) -> None:
-        """Store the final aggregated message on the exception instance."""
+        """
+        Store the final aggregated message on the exception instance.
+
+        :return:
+            Returns None.
+        """
 
         self.args = (self.message,)
