@@ -18,15 +18,22 @@ from __future__ import annotations
 
 import fnmatch
 import logging
+import os
 import re
+import tarfile
 
 from abc import ABC
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, fields
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Any, TypeVar, cast, dataclass_transform, overload, Literal
 
+from rich.logging import RichHandler
+
+from admin_helper.console import AdminHelperConsole
 from admin_helper.exceptions import BroadcastException
 from admin_helper.settings import AdminHelperSettings
 
@@ -35,6 +42,8 @@ __all__ = [
     "BaseObject",
     "DuplicateObjectNameError",
     "DuplicateRegistrationNameError",
+    "ObjectLogger",
+    "ObjectLoggerConfig",
     "ObjectTreeLoopError",
     "ParentResolutionError",
     "RegistryError",
@@ -54,6 +63,240 @@ _T = TypeVar("_T", bound="BaseObject")
 # operations. The collection is private because callers must not mutate global
 # framework configuration directly.
 _BROADCAST_METHODS: list[str] = []
+
+
+# ---------------------------------------------------------------------------
+# Public object-logger configuration
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, slots=True)
+class ObjectLoggerConfig:
+    """
+    Declarative logging configuration for one ``BaseObject``.
+
+    The configuration is intentionally independent from Pydantic and global
+    application settings. It can therefore be passed directly through the
+    ``kwargs`` argument of ``@register`` and reused as a normal dataclass value.
+
+    By default, an object logger has no handlers, uses ``NOTSET`` as its own
+    level, and forwards records to its parent object's logger. A root object
+    forwards to Python's root logger.
+
+    ``console`` and ``file`` are convenience switches that create fresh handler
+    instances for every object. ``handlers`` may additionally contain custom
+    handler instances for advanced use cases.
+    """
+
+    follow_parent: bool = True
+    level: int | str | None = None
+    disabled: bool = False
+
+    handlers: tuple[logging.Handler, ...] = field(default_factory=tuple,
+                                                  repr=False)
+    formatter: logging.Formatter | None = field(default=None,
+                                                repr=False)
+
+    console: bool = False
+    console_level: int | str | None = None
+    console_format: str = "%(message)s"
+    console_rich_show_time: bool = True
+    console_rich_markup: bool = True
+    console_rich_show_level: bool = True
+    console_rich_show_path: bool = False
+
+    file: bool = False
+    file_path: str | Path | None = None
+    file_mode: str = "a"
+    file_level: int | str | None = None
+    file_format: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    file_max_bytes: int = 0
+    file_backup_count: int = 0
+    file_encoding: str | None = "utf-8"
+    file_delay: bool = False
+    file_archive_backup_count: int = 0
+
+
+class ObjectLogger(logging.Logger):
+    """
+    Logger implementation used by every ``BaseObject``.
+
+    The class keeps track only of handlers installed through
+    ``ObjectLoggerConfig``. Reconfiguration therefore removes and replaces
+    framework-managed handlers without touching handlers installed externally.
+    """
+
+    class Formatter(logging.Formatter):
+        """
+        Preserve Rich markup messages while formatting ordinary log records.
+        """
+
+        def format(self,
+                   record: logging.LogRecord) -> str:
+            if hasattr(record, "markup"):
+                return str(record.msg)
+
+            return super().format(record)
+
+    class TarRotatingFileHandler(RotatingFileHandler):
+        """
+        Rotate log files and optionally archive completed rotations as tar.gz.
+        """
+
+        def __init__(self,
+                     name: str,
+                     filename: str | Path,
+                     mode: str = "a",
+                     max_bytes: int = 0,
+                     backup_count: int = 0,
+                     encoding: str | None = None,
+                     delay: bool = False,
+                     archive_backup_count: int = 0):
+            super().__init__(filename=filename,
+                             mode=mode,
+                             maxBytes=max_bytes,
+                             backupCount=backup_count,
+                             encoding=encoding,
+                             delay=delay)
+            self.set_name(name)
+            self.archive_backup_count = archive_backup_count
+            self.archive_base_filename = self.baseFilename[:self.baseFilename.rfind(".")] if "." in self.baseFilename else self.baseFilename
+
+        def doRollover(self) -> None:
+            """
+            Rotate the active file and archive a complete backup generation.
+            """
+
+            super().doRollover()
+
+            if self.backupCount <= 0 or self.archive_backup_count <= 0:
+                return
+
+            backup_log_pattern = self.baseFilename + ".%d"
+            backup_logs = [Path(backup_log_pattern % index)
+                           for index in range(1, self.backupCount + 1)]
+            backup_logs = [log for log in backup_logs if log.exists()]
+
+            if len(backup_logs) < self.backupCount:
+                return
+
+            archive_filename_pattern = self.archive_base_filename + "_logs.%d.tar.gz"
+            archive_index = 0
+            archive_filename = Path(archive_filename_pattern % archive_index)
+
+            while archive_filename.exists():
+                archive_index += 1
+                archive_filename = Path(archive_filename_pattern % archive_index)
+
+            if archive_index >= self.archive_backup_count:
+                oldest_archive = Path(archive_filename_pattern % 0)
+                if oldest_archive.exists():
+                    os.remove(oldest_archive)
+                archive_filename = oldest_archive
+
+            with tarfile.open(archive_filename, "w:gz") as archive:
+                for log in backup_logs:
+                    archive.add(log, arcname=log.name)
+                    os.remove(log)
+
+    def __init__(self,
+                 name: str,
+                 level: int = logging.NOTSET):
+        super().__init__(name=name,
+                         level=level)
+        self._managed_handlers: list[logging.Handler] = []
+
+    def configure(self,
+                  config: ObjectLoggerConfig,
+                  parent_logger: logging.Logger | None) -> None:
+        """
+        Apply one complete object-logger configuration atomically.
+        """
+
+        for handler in tuple(self._managed_handlers):
+            if handler in self.handlers:
+                self.removeHandler(handler)
+            try:
+                handler.close()
+            finally:
+                self._managed_handlers.remove(handler)
+
+        self.disabled = config.disabled
+        self.setLevel(logging.NOTSET if config.level is None else config.level)
+
+        if config.follow_parent:
+            self.parent = parent_logger if parent_logger is not None else logging.getLogger()
+            self.propagate = True
+        else:
+            self.parent = None
+            self.propagate = False
+
+        configured_handlers: list[logging.Handler] = []
+
+        if config.console and not config.disabled:
+            console_handler = RichHandler(console=AdminHelperConsole,
+                                          show_time=config.console_rich_show_time,
+                                          markup=config.console_rich_markup,
+                                          show_level=config.console_rich_show_level,
+                                          show_path=config.console_rich_show_path)
+            console_handler.set_name(self.name)
+            if config.console_level is not None:
+                console_handler.setLevel(config.console_level)
+            console_handler.setFormatter(self.Formatter(config.console_format))
+            configured_handlers.append(console_handler)
+
+        if config.file and not config.disabled:
+            if config.file_path is None:
+                raise ValueError(f"File logging is enabled for {self.name!r}, but file_path is not set.")
+
+            file_path = Path(config.file_path)
+            if not file_path.parent.exists():
+                raise FileNotFoundError(f"Log file parent directory does not exist: {file_path.parent!s}")
+
+            file_handler = self.TarRotatingFileHandler(name=self.name,
+                                                       filename=file_path,
+                                                       mode=config.file_mode,
+                                                       max_bytes=config.file_max_bytes,
+                                                       backup_count=config.file_backup_count,
+                                                       encoding=config.file_encoding,
+                                                       delay=config.file_delay,
+                                                       archive_backup_count=config.file_archive_backup_count)
+            if config.file_level is not None:
+                file_handler.setLevel(config.file_level)
+            file_handler.setFormatter(self.Formatter(config.file_format))
+            configured_handlers.append(file_handler)
+
+        for handler in config.handlers:
+            if config.formatter is not None:
+                handler.setFormatter(config.formatter)
+            configured_handlers.append(handler)
+
+        for handler in configured_handlers:
+            self.addHandler(handler)
+            self._managed_handlers.append(handler)
+
+
+def _get_object_logger(name: str) -> ObjectLogger:
+    """
+    Return an ``ObjectLogger`` without changing the application's global logger class.
+    """
+
+    existing = logging.Logger.manager.loggerDict.get(name)
+    if isinstance(existing, ObjectLogger):
+        return existing
+    if isinstance(existing, logging.Logger):
+        raise RegistryError(f"Logger {name!r} already exists as {type(existing).__name__}, not ObjectLogger.")
+
+    previous_logger_class = logging.getLoggerClass()
+    logging.setLoggerClass(ObjectLogger)
+    try:
+        logger = logging.getLogger(name)
+    finally:
+        logging.setLoggerClass(previous_logger_class)
+
+    if not isinstance(logger, ObjectLogger):
+        raise RegistryError(f"Could not create ObjectLogger {name!r}.")
+
+    return logger
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +409,7 @@ class _ObjectRegistry:
     def __init__(self) -> None:
         """
         Initialize all internal indexes and lifecycle flags.
-        
+
         The registry stores registrations separately from instantiated objects. All
         mutable dictionaries remain private so callers cannot bypass validation,
         name uniqueness checks, or tree consistency rules.
@@ -190,11 +433,11 @@ class _ObjectRegistry:
                   constructor_kwargs: Mapping[str, Any] | None = None) -> type[_T]:
         """
         Register a decorated ``BaseObject`` subclass.
-        
+
         This method is intentionally private. User code should use the public
         ``@register(...)`` decorator, which first applies the dataclass transform and
         then delegates to this method.
-        
+
         The method validates unique registration names, prevents the same class from
         being registered twice, rejects constructor arguments for abstract templates,
         and stores the resulting registration metadata.
@@ -247,12 +490,12 @@ class _ObjectRegistry:
         # No object instance exists during registration. Use the future local
         # object logger name so the message participates in the same logging
         # namespace without adding handlers of its own.
-        logging.getLogger(normalized_name).debug("Registered %s.%s as %s (abstract=%s, parent=%r)",
-                                                 cls.__module__,
-                                                 cls.__qualname__,
-                                                 normalized_name,
-                                                 abstract,
-                                                 parent)
+        _get_object_logger(normalized_name).debug("Registered %s.%s as %s (abstract=%s, parent=%r)",
+                                                  cls.__module__,
+                                                  cls.__qualname__,
+                                                  normalized_name,
+                                                  abstract,
+                                                  parent)
 
         return cls
 
@@ -331,7 +574,7 @@ class _ObjectRegistry:
 
         # Emit the creation message through the future object logger. It has no
         # handlers by default and therefore follows normal parent/root logging.
-        construction_logger = logging.getLogger(object_name)
+        construction_logger = _get_object_logger(object_name)
         construction_logger.debug("Instantiating object %s from %s.%s",
                                   object_name,
                                   registration.cls.__module__,
@@ -1200,9 +1443,9 @@ class BaseObject(ABC):
     # them after initialization.
     name: str = field(init=False,
                       metadata={"frozen": True})
-    logger: logging.Logger = field(init=False,
-                                   repr=False,
-                                   metadata={"frozen": True})
+    logger: ObjectLogger = field(init=False,
+                                 repr=False,
+                                 metadata={"frozen": True})
     parent: BaseObject | None = field(default=None,
                                       init=False,
                                       repr=False,
@@ -1210,19 +1453,11 @@ class BaseObject(ABC):
 
     # Public logger configuration.
     #
-    # The object logger itself remains framework-managed and read-only. These
-    # fields are the supported configuration surface. Changing one of them
-    # after initialization automatically reapplies the logger configuration.
-    log_follow_parent: bool = field(default=True,
-                                    kw_only=True)
-    log_level: int | str | None = field(default=None,
-                                        kw_only=True)
-    log_handlers: tuple[logging.Handler, ...] = field(default_factory=tuple,
-                                                      repr=False,
-                                                      kw_only=True)
-    log_formatter: logging.Formatter | None = field(default=None,
-                                                    repr=False,
-                                                    kw_only=True)
+    # One immutable configuration object keeps the dataclass API compact and
+    # allows complete logger profiles to be passed through @register kwargs.
+    logger_config: ObjectLoggerConfig = field(default_factory=ObjectLoggerConfig,
+                                              repr=False,
+                                              kw_only=True)
 
     # Private mutable framework state.
     #
@@ -1241,9 +1476,6 @@ class BaseObject(ABC):
     _registration_name: str = field(init=False,
                                     repr=False,
                                     metadata={"frozen": True})
-    _managed_log_handlers: list[logging.Handler] = field(default_factory=list,
-                                                         init=False,
-                                                         repr=False)
 
     def __post_init__(self) -> None:
         """
@@ -1316,69 +1548,46 @@ class BaseObject(ABC):
         # Logger configuration fields are intentionally mutable. Reapply the
         # complete configuration after each change so parent linkage, level,
         # handlers, and formatter can never drift apart.
-        if initialized and key in {"log_follow_parent",
-                                   "log_level",
-                                   "log_handlers",
-                                   "log_formatter"}:
+        if initialized and key == "logger_config":
             self._configure_logger_tree()
 
     def _configure_logger(self) -> None:
         """
-        Create or refresh this object's logger from the framework fields.
+        Create or refresh this object's logger from ``logger_config``.
 
-        Default behavior intentionally adds no handlers. Records propagate to
-        the parent object's logger, or to Python's root logger for a root object.
-        Setting ``log_follow_parent`` to ``False`` disconnects both propagation
-        and effective-level inheritance. In that mode a missing ``log_level``
-        means ``NOTSET`` and the logger accepts all records for its own handlers.
+        A default configuration installs no handlers and forwards records to
+        the parent object's logger. Root objects forward to Python's root
+        logger. Replacing ``logger_config`` after initialization automatically
+        reapplies the complete configuration to this object and its descendants.
+
         :return: None
         """
 
         previous_logger = getattr(self, "logger", None)
+        logger = _get_object_logger(self.name)
 
-        # Remove only handlers previously attached by this object. External
-        # handlers are not touched, even when the logger already existed.
-        if isinstance(previous_logger, logging.Logger):
-            for handler in self._managed_log_handlers:
-                if handler in previous_logger.handlers:
-                    previous_logger.removeHandler(handler)
+        # A renamed object receives another named logger. Clear the previous
+        # framework-managed configuration before switching references.
+        if isinstance(previous_logger, ObjectLogger) and previous_logger is not logger:
+            previous_logger.configure(ObjectLoggerConfig(follow_parent=False,
+                                                         disabled=True),
+                                      parent_logger=None)
 
-        logger = logging.getLogger(self.name)
         object.__setattr__(self, "logger", logger)
-        self._managed_log_handlers.clear()
-
-        # Explicitly mirror the object hierarchy in the logging hierarchy. This
-        # is refreshed after re-parenting because the object path and parent
-        # logger may both have changed.
-        if self.log_follow_parent:
-            logger.parent = self.parent.logger if self.parent is not None else logging.getLogger()
-            logger.propagate = True
-            logger.setLevel(logging.NOTSET if self.log_level is None else self.log_level)
-        else:
-            logger.parent = None
-            logger.propagate = False
-            logger.setLevel(logging.NOTSET if self.log_level is None else self.log_level)
-
-        # Attach only explicitly configured handlers. The default empty tuple
-        # ensures child loggers merely forward records upward.
-        for handler in self.log_handlers:
-            if self.log_formatter is not None:
-                handler.setFormatter(self.log_formatter)
-            logger.addHandler(handler)
-            self._managed_log_handlers.append(handler)
-
-        logger.debug("Configured logger %s: follow_parent=%s, level=%s, handlers=%d",
+        logger.configure(config=self.logger_config,
+                         parent_logger=self.parent.logger if self.parent is not None else None)
+        logger.debug("Configured object logger %s: follow_parent=%s, level=%s, handlers=%d",
                      logger.name,
-                     self.log_follow_parent,
+                     self.logger_config.follow_parent,
                      logging.getLevelName(logger.level),
-                     len(self._managed_log_handlers))
+                     len(logger.handlers))
 
     def _configure_logger_tree(self) -> None:
         """
         Refresh this logger and every descendant logger.
 
-        Descendant refresh is required after re-parenting because each child
-        holds an explicit ``logging.Logger.parent`` reference.
+        Descendant refresh is required after re-parenting because object names
+        and explicit ``logging.Logger.parent`` references may both change.
 
         :return: None
         """
@@ -1391,7 +1600,7 @@ class BaseObject(ABC):
     def _unlocked(self) -> Iterator[BaseObject]:
         """
         Temporarily disable the custom frozen-field guard.
-        
+
         The previous lock state is restored in ``finally`` even when an exception is
         raised. This method is private and reserved for registry-maintained updates.
 
@@ -1420,7 +1629,7 @@ class BaseObject(ABC):
     def root_parent(self) -> BaseObject:
         """
         Return the highest parent in this object's hierarchy.
-        
+
         A defensive identity set detects corrupted runtime cycles even though normal
         registry operations already prevent them.
 
@@ -1475,7 +1684,7 @@ class BaseObject(ABC):
                   obj: _T) -> _T:
         """
         Attach an existing registered object below this object.
-        
+
         The registry performs loop detection, collision checks, recursive renaming,
         and search-index maintenance. The method returns the attached object with its
         concrete type preserved.
@@ -1496,7 +1705,7 @@ class BaseObject(ABC):
                           name: str) -> BaseObject | None:
         """
         Return one descendant by a path relative to this object.
-        
+
         The method returns ``None`` when no matching descendant exists. Supplying
         ``expected_type`` preserves the concrete return type and raises ``TypeError``
         when the located child has another type.
@@ -1513,7 +1722,7 @@ class BaseObject(ABC):
                           expected_type: type[_T]) -> _T | None:
         """
         Return one descendant by a path relative to this object.
-        
+
         The method returns ``None`` when no matching descendant exists. Supplying
         ``expected_type`` preserves the concrete return type and raises ``TypeError``
         when the located child has another type.
@@ -1530,7 +1739,7 @@ class BaseObject(ABC):
                           expected_type: type[_T] | None = None) -> BaseObject | _T | None:
         """
         Return one descendant by a path relative to this object.
-        
+
         The method returns ``None`` when no matching descendant exists. Supplying
         ``expected_type`` preserves the concrete return type and raises ``TypeError``
         when the located child has another type.
@@ -1568,7 +1777,7 @@ class BaseObject(ABC):
                        **method_kwargs: Any) -> list[Any]:
         """
         Call one method across the child tree.
-        
+
         Each direct child receives the method call when it implements the named
         method. Otherwise the request is forwarded recursively to that child's
         children. Errors may be re-raised immediately or wrapped in
@@ -1657,11 +1866,11 @@ def register(*,
              parent: _ParentReference = None) -> Callable[[type[_T]], type[_T]]:
     """
     Transform and register a ``BaseObject`` subclass as a dataclass.
-    
+
     Abstract registrations define reusable templates and are never instantiated.
     Concrete registrations may store constructor arguments and an optional parent
     reference. Actual construction is delayed until ``instantiate_all`` runs.
-    
+
     Examples:
         ``@register(abstract=True, name='service')`` defines a template.
         ``@register(name='app')`` defines a root object.
@@ -1686,11 +1895,11 @@ def register(*,
              kwargs: Mapping[str, Any] | None = None) -> Callable[[type[_T]], type[_T]]:
     """
     Transform and register a ``BaseObject`` subclass as a dataclass.
-    
+
     Abstract registrations define reusable templates and are never instantiated.
     Concrete registrations may store constructor arguments and an optional parent
     reference. Actual construction is delayed until ``instantiate_all`` runs.
-    
+
     Examples:
         ``@register(abstract=True, name='service')`` defines a template.
         ``@register(name='app')`` defines a root object.
@@ -1717,11 +1926,11 @@ def register(*,
              kwargs: Mapping[str, Any] | None = None) -> Callable[[type[_T]], type[_T]]:
     """
     Transform and register a ``BaseObject`` subclass as a dataclass.
-    
+
     Abstract registrations define reusable templates and are never instantiated.
     Concrete registrations may store constructor arguments and an optional parent
     reference. Actual construction is delayed until ``instantiate_all`` runs.
-    
+
     Examples:
         ``@register(abstract=True, name='service')`` defines a template.
         ``@register(name='app')`` defines a root object.
@@ -1764,6 +1973,68 @@ def register(*,
 # Example object definitions
 # ---------------------------------------------------------------------------
 
+# Registration messages are emitted before object instances and their handlers
+# exist. The example therefore configures Python's root logger first so those
+# early framework messages are visible as well. In a real application this
+# belongs in the executable entry point before importing object-definition
+# modules.
+def _configure_example_bootstrap_logging() -> None:
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+
+    if any(handler.get_name() == "example-bootstrap-console"
+           for handler in root_logger.handlers):
+        return
+
+    console_handler = RichHandler(console=AdminHelperConsole,
+                                  show_time=True,
+                                  markup=True,
+                                  show_level=True,
+                                  show_path=False)
+    console_handler.set_name("example-bootstrap-console")
+    console_handler.setLevel(logging.DEBUG)
+    console_handler.setFormatter(ObjectLogger.Formatter("%(message)s"))
+    root_logger.addHandler(console_handler)
+
+
+# Create the directory before handler construction. ObjectLoggerConfig never
+# creates directories implicitly because a misspelled path should fail loudly.
+_EXAMPLE_LOG_DIRECTORY = Path("logs")
+_EXAMPLE_LOG_DIRECTORY.mkdir(parents=True,
+                             exist_ok=True)
+
+_configure_example_bootstrap_logging()
+
+# The root object owns the central console and application-file handlers.
+# ``follow_parent=False`` prevents duplicate output through Python's root logger
+# after the object tree has been initialized. All descendants use their default
+# configuration and therefore forward records to this logger.
+_APP_LOGGER_CONFIG = ObjectLoggerConfig(follow_parent=False,
+                                        level=logging.DEBUG,
+                                        console=True,
+                                        console_level=logging.DEBUG,
+                                        console_format="%(message)s",
+                                        file=True,
+                                        file_path=_EXAMPLE_LOG_DIRECTORY / "application.log",
+                                        file_level=logging.DEBUG,
+                                        file_format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                                        file_max_bytes=1_000_000,
+                                        file_backup_count=3,
+                                        file_archive_backup_count=2)
+
+# This profile is used only by ``apache_2``. Its records are written to a
+# dedicated rotating file and still propagate to App, so they also appear in
+# the central console and application.log.
+_APACHE_2_LOGGER_CONFIG = ObjectLoggerConfig(follow_parent=True,
+                                             level=logging.DEBUG,
+                                             file=True,
+                                             file_path=_EXAMPLE_LOG_DIRECTORY / "apache_2.log",
+                                             file_level=logging.DEBUG,
+                                             file_format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                                             file_max_bytes=500_000,
+                                             file_backup_count=2,
+                                             file_archive_backup_count=2)
+
 @register(abstract=True,
           name="apache_object")
 class ApacheObject(BaseObject):
@@ -1790,7 +2061,8 @@ class ReverseProxyApacheObject(ApacheObject):
     target: str
 
 
-@register(name="app")
+@register(name="app",
+          kwargs={"logger_config": _APP_LOGGER_CONFIG})
 class App(BaseObject):
     ...
 
@@ -1806,7 +2078,8 @@ class ApacheRoot(ApacheObject):
 @register(name="apache_2",
           parent=App,
           kwargs={"enabled": False,
-                  "config_file": "/tmp/apache2.conf"})
+                  "config_file": "/tmp/apache2.conf",
+                  "logger_config": _APACHE_2_LOGGER_CONFIG})
 class SecondApacheRoot(ApacheObject):
     config_file: str
 
@@ -1837,5 +2110,27 @@ if __name__ == "__main__":
 
     static_files_1_c = object_registry.find_by_name("app.*.static_files", StaticFilesApacheObject)
     static_files_2_c = object_registry.find_by_name("**.static_files", StaticFilesApacheObject)
+
+    # All of these messages reach the App console and application.log because
+    # the child loggers follow their parent by default.
+    apache_1.logger.debug("Apache 1 debug message through the central logger configuration")
+    static_files_1_a.logger.info("Static-files information through the central logger configuration")
+
+    # apache_2 additionally writes to logs/apache_2.log through its local file
+    # handler, while propagation still forwards the same record to App.
+    apache_2.logger.warning("Apache 2 warning written centrally and to its dedicated file")
+
+    # Runtime reconfiguration replaces the complete immutable config object.
+    # This example disconnects one subobject and writes only to a separate file.
+    static_files_2_a.logger_config = ObjectLoggerConfig(follow_parent=False,
+                                                        level=logging.DEBUG,
+                                                        file=True,
+                                                        file_path=_EXAMPLE_LOG_DIRECTORY / "static_files_2.log",
+                                                        file_level=logging.DEBUG,
+                                                        file_format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                                                        file_max_bytes=250_000,
+                                                        file_backup_count=2,
+                                                        file_archive_backup_count=1)
+    static_files_2_a.logger.debug("This message is written only to static_files_2.log")
 
     print()
