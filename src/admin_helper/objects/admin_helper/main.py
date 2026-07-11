@@ -9,7 +9,7 @@ from admin_helper.settings import AdminHelperSettings
 @dataclass
 class AdminHelper(StartObject, RenderFileObject,
                   name="admin_helper",
-                  logger=AdminHelperLogger,
+                  # logger=AdminHelperLogger,
                   src="README.md.j2",
                   dest=AdminHelperSettings.base_directory / "README.md",
                   overwrite=True):
