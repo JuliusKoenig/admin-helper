@@ -26,15 +26,19 @@ from abc import ABC
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from enum import Enum
 from typing import Any, TypeVar, cast, dataclass_transform, overload, Literal
 
 from rich.logging import RichHandler
 
 from admin_helper.console import AdminHelperConsole
-from admin_helper.exceptions import BroadcastException
+from admin_helper.exceptions import (
+    BroadcastException,
+    LoggerConfigurationError,
+)
 from admin_helper.settings import AdminHelperSettings
 
 __all__ = [
@@ -44,6 +48,8 @@ __all__ = [
     "DuplicateRegistrationNameError",
     "ObjectLogger",
     "ObjectLoggerConfig",
+    "LoggerConfigValue",
+    "LoggerParent",
     "LoggerConfigurationError",
     "ObjectTreeLoopError",
     "ParentResolutionError",
@@ -70,119 +76,297 @@ _BROADCAST_METHODS: list[str] = []
 # Public object-logger configuration
 # ---------------------------------------------------------------------------
 
-class LoggerConfigurationError(RuntimeError):
+class LoggerConfigValue(Enum):
     """
-    Raised when an object logger class or reconfiguration is invalid.
+    Special values used by inheritable logger-configuration attributes.
 
-    The exception is separate from registry-construction failures because it
-    may also be raised later when user code attempts to reconfigure an already
-    initialized object logger.
+    Assign ``LoggerConfigValue.INHERIT`` to an attribute to remove its local
+    override. The effective value is then read from the parent object's
+    effective logger configuration, or from the framework defaults for roots.
     """
+
+    INHERIT = "inherit"
+
+
+class LoggerParent(Enum):
+    """
+    Special values for selecting the actual ``logging.Logger.parent``.
+
+    ``OBJECT_PARENT`` follows the logger of the current object's tree parent.
+    ``ROOT`` uses Python's root logger directly. ``NONE`` disconnects the logger
+    from the logging hierarchy. A normal string selects any named logger.
+    """
+
+    OBJECT_PARENT = "object_parent"
+    ROOT = "root"
+    NONE = "none"
 
 
 @dataclass(frozen=True, slots=True)
+class _ResolvedObjectLoggerConfig:
+    """Complete, inheritance-free logger configuration used at runtime."""
+
+    logger_class: type[ObjectLogger]
+    parent: LoggerParent | str
+    propagate: bool
+    level: int | str | None
+    disabled: bool
+
+    handler_factories: tuple[Callable[[], logging.Handler], ...]
+    formatter: logging.Formatter | None
+
+    console: bool
+    console_level: int | str | None
+    console_format: str
+    console_rich_show_time: bool
+    console_rich_markup: bool
+    console_rich_show_level: bool
+    console_rich_show_path: bool
+
+    file: bool
+    file_path: str | Path
+    file_mode: str
+    file_level: int | str | None
+    file_format: str
+    file_max_bytes: int
+    file_backup_count: int
+    file_encoding: str | None
+    file_delay: bool
+    file_archive_backup_count: int
+
+
+@dataclass(slots=True)
 class ObjectLoggerConfig:
     """
-    Declarative logging configuration for one ``BaseObject``.
+    Mutable and inheritable logging interface for one ``BaseObject``.
 
-    The configuration is intentionally independent from Pydantic and global
-    application settings. It can therefore be passed directly through the
-    ``kwargs`` argument of ``@register`` and reused as a normal dataclass value.
+    Every configurable value except ``parent`` may be set to
+    ``LoggerConfigValue.INHERIT``. In that state the value follows the effective
+    configuration of the parent object. Assigning an explicit value creates a
+    local override; assigning ``INHERIT`` again removes that override.
 
-    By default, an object logger has no handlers, uses ``NOTSET`` as its own
-    level, and forwards records to its parent object's logger. A root object
-    forwards to Python's root logger.
+    ``parent`` controls only the actual ``logging.Logger.parent`` relationship.
+    It is independent from configuration inheritance and defaults to the logger
+    belonging to the current object's tree parent.
 
-    ``console`` and ``file`` are convenience switches that create fresh handler
-    instances for every object. ``handlers`` may additionally contain custom
-    handler instances for advanced use cases.
+    Every mutation automatically reconfigures the owning object and its complete
+    descendant tree after the config has been bound by ``BaseObject``.
     """
 
-    logger_class: type[ObjectLogger] | None = field(default=None,
-                                                    repr=False)
-    follow_parent: bool = True
-    level: int | str | None = None
-    disabled: bool = False
+    logger_class: type[ObjectLogger] | LoggerConfigValue = LoggerConfigValue.INHERIT
+    parent: LoggerParent | str = LoggerParent.OBJECT_PARENT
+    propagate: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
+    level: int | str | None | LoggerConfigValue = LoggerConfigValue.INHERIT
+    disabled: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
 
-    handlers: tuple[logging.Handler, ...] = field(default_factory=tuple,
-                                                  repr=False)
-    formatter: logging.Formatter | None = field(default=None,
-                                                repr=False)
+    handler_factories: tuple[Callable[[], logging.Handler], ...] | LoggerConfigValue = LoggerConfigValue.INHERIT
+    formatter: logging.Formatter | None | LoggerConfigValue = LoggerConfigValue.INHERIT
 
-    console: bool = False
-    console_level: int | str | None = None
-    console_format: str = "%(message)s"
-    console_rich_show_time: bool = True
-    console_rich_markup: bool = True
-    console_rich_show_level: bool = True
-    console_rich_show_path: bool = False
+    console: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
+    console_level: int | str | None | LoggerConfigValue = LoggerConfigValue.INHERIT
+    console_format: str | LoggerConfigValue = LoggerConfigValue.INHERIT
+    console_rich_show_time: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
+    console_rich_markup: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
+    console_rich_show_level: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
+    console_rich_show_path: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
 
-    file: bool = False
-    file_path: str | Path | None = None
-    file_mode: str = "a"
-    file_level: int | str | None = None
-    file_format: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    file_max_bytes: int = 0
-    file_backup_count: int = 0
-    file_encoding: str | None = "utf-8"
-    file_delay: bool = False
-    file_archive_backup_count: int = 0
+    file: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
+    file_path: str | Path | LoggerConfigValue = LoggerConfigValue.INHERIT
+    file_mode: str | LoggerConfigValue = LoggerConfigValue.INHERIT
+    file_level: int | str | None | LoggerConfigValue = LoggerConfigValue.INHERIT
+    file_format: str | LoggerConfigValue = LoggerConfigValue.INHERIT
+    file_max_bytes: int | LoggerConfigValue = LoggerConfigValue.INHERIT
+    file_backup_count: int | LoggerConfigValue = LoggerConfigValue.INHERIT
+    file_encoding: str | None | LoggerConfigValue = LoggerConfigValue.INHERIT
+    file_delay: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
+    file_archive_backup_count: int | LoggerConfigValue = LoggerConfigValue.INHERIT
+
+    _on_change: Callable[[], None] | None = field(default=None,
+                                                  init=False,
+                                                  repr=False,
+                                                  compare=False)
+    _notifications_enabled: bool = field(default=False,
+                                         init=False,
+                                         repr=False,
+                                         compare=False)
 
     def __post_init__(self) -> None:
-        """
-        Validate the configured logger implementation.
+        """Validate all explicit values and enable mutation notifications."""
 
-        ``None`` selects the framework's default ``ObjectLogger``. A custom
-        value must be a class and must inherit from ``ObjectLogger`` so the
-        framework can rely on the managed-handler and configuration behavior.
+        self._validate_all()
+        object.__setattr__(self, "_notifications_enabled", True)
 
-        :return: None
-        """
+    def __setattr__(self,
+                    key: str,
+                    value: Any) -> None:
+        """Validate a changed field and notify the owning object immediately."""
 
-        if self.logger_class is None:
+        if (not key.startswith("_")
+                and getattr(self, "_notifications_enabled", False)):
+            self._validate_field(key, value)
+
+        object.__setattr__(self, key, value)
+
+        if key.startswith("_") or not getattr(self, "_notifications_enabled", False):
             return
 
-        if not isinstance(self.logger_class, type) or not issubclass(self.logger_class, ObjectLogger):
-            raise LoggerConfigurationError(f"logger_class must inherit from {ObjectLogger.__name__}, "
-                                           f"got {self.logger_class!r}.")
+        callback = getattr(self, "_on_change", None)
+        if callback is not None:
+            callback()
 
-    @property
-    def resolved_logger_class(self) -> type[ObjectLogger]:
-        """
-        Return the configured logger class or the framework default.
+    def copy(self) -> ObjectLoggerConfig:
+        """Return an unbound copy suitable for one concrete object instance."""
 
+        result = replace(self)
+        object.__setattr__(result, "_on_change", None)
+        object.__setattr__(result, "_notifications_enabled", True)
+        return result
 
-        :return: The configured logger class
-        """
+    def _bind(self,
+              on_change: Callable[[], None]) -> None:
+        """Bind the config to its owning object's reconfiguration callback."""
 
-        return self.logger_class or ObjectLogger
+        object.__setattr__(self, "_on_change", on_change)
+
+    def _unbind(self) -> None:
+        """Remove the current owner callback before replacing the config."""
+
+        object.__setattr__(self, "_on_change", None)
+
+    def resolve(self,
+                parent_config: _ResolvedObjectLoggerConfig | None) -> _ResolvedObjectLoggerConfig:
+        """Merge local overrides with the parent's effective configuration."""
+
+        defaults = self._framework_defaults()
+
+        def inherited(name: str) -> Any:
+            value = getattr(self, name)
+            if value is not LoggerConfigValue.INHERIT:
+                return value
+            if parent_config is not None:
+                return getattr(parent_config, name)
+            return getattr(defaults, name)
+
+        return _ResolvedObjectLoggerConfig(logger_class=inherited("logger_class"),
+                                           parent=self.parent,
+                                           propagate=inherited("propagate"),
+                                           level=inherited("level"),
+                                           disabled=inherited("disabled"),
+                                           handler_factories=inherited("handler_factories"),
+                                           formatter=inherited("formatter"),
+                                           console=inherited("console"),
+                                           console_level=inherited("console_level"),
+                                           console_format=inherited("console_format"),
+                                           console_rich_show_time=inherited("console_rich_show_time"),
+                                           console_rich_markup=inherited("console_rich_markup"),
+                                           console_rich_show_level=inherited("console_rich_show_level"),
+                                           console_rich_show_path=inherited("console_rich_show_path"),
+                                           file=inherited("file"),
+                                           file_path=inherited("file_path"),
+                                           file_mode=inherited("file_mode"),
+                                           file_level=inherited("file_level"),
+                                           file_format=inherited("file_format"),
+                                           file_max_bytes=inherited("file_max_bytes"),
+                                           file_backup_count=inherited("file_backup_count"),
+                                           file_encoding=inherited("file_encoding"),
+                                           file_delay=inherited("file_delay"),
+                                           file_archive_backup_count=inherited("file_archive_backup_count"))
+
+    @staticmethod
+    def _framework_defaults() -> _ResolvedObjectLoggerConfig:
+        """Return stable root defaults for values that cannot be inherited."""
+
+        return _ResolvedObjectLoggerConfig(logger_class=ObjectLogger,
+                                           parent=LoggerParent.OBJECT_PARENT,
+                                           propagate=True,
+                                           level=logging.NOTSET,
+                                           disabled=False,
+                                           handler_factories=(),
+                                           formatter=None,
+                                           console=False,
+                                           console_level=None,
+                                           console_format="%(message)s",
+                                           console_rich_show_time=True,
+                                           console_rich_markup=True,
+                                           console_rich_show_level=True,
+                                           console_rich_show_path=False,
+                                           file=False,
+                                           file_path="logs/{name}.log",
+                                           file_mode="a",
+                                           file_level=None,
+                                           file_format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                                           file_max_bytes=0,
+                                           file_backup_count=0,
+                                           file_encoding="utf-8",
+                                           file_delay=False,
+                                           file_archive_backup_count=0)
+
+    def _validate_all(self) -> None:
+        """Validate every public configuration field."""
+
+        for name in self.__dataclass_fields__:
+            if not name.startswith("_"):
+                self._validate_field(name, getattr(self, name))
+
+    @staticmethod
+    def _validate_field(name: str,
+                        value: Any) -> None:
+        """Validate one explicit field while allowing ``INHERIT`` everywhere."""
+
+        if value is LoggerConfigValue.INHERIT:
+            if name == "parent":
+                raise LoggerConfigurationError("parent cannot use LoggerConfigValue.INHERIT.")
+            return
+
+        if name == "logger_class":
+            if not isinstance(value, type) or not issubclass(value, ObjectLogger):
+                raise LoggerConfigurationError(f"logger_class must inherit from {ObjectLogger.__name__}, got {value!r}.")
+            return
+
+        if name == "parent":
+            if not isinstance(value, (LoggerParent, str)):
+                raise LoggerConfigurationError("parent must be LoggerParent or a logger-name string.")
+            if isinstance(value, str) and not value.strip():
+                raise LoggerConfigurationError("parent logger name cannot be empty.")
+            return
+
+        boolean_fields = {"propagate", "disabled", "console", "console_rich_show_time",
+                          "console_rich_markup", "console_rich_show_level", "console_rich_show_path",
+                          "file", "file_delay"}
+        if name in boolean_fields and not isinstance(value, bool):
+            raise LoggerConfigurationError(f"{name} must be bool or LoggerConfigValue.INHERIT.")
+
+        integer_fields = {"file_max_bytes", "file_backup_count", "file_archive_backup_count"}
+        if name in integer_fields and (not isinstance(value, int) or value < 0):
+            raise LoggerConfigurationError(f"{name} must be a non-negative integer or LoggerConfigValue.INHERIT.")
+
+        if name == "handler_factories":
+            if not isinstance(value, tuple) or not all(callable(factory) for factory in value):
+                raise LoggerConfigurationError("handler_factories must be a tuple of callables.")
+
+        if name == "formatter" and value is not None and not isinstance(value, logging.Formatter):
+            raise LoggerConfigurationError("formatter must be logging.Formatter, None, or INHERIT.")
 
 
 class ObjectLogger(logging.Logger):
     """
     Logger implementation used by every ``BaseObject``.
 
-    The class keeps track only of handlers installed through
-    ``ObjectLoggerConfig``. Reconfiguration therefore removes and replaces
-    framework-managed handlers without touching handlers installed externally.
+    Only framework-managed handlers are replaced during dynamic reconfiguration.
+    Externally attached handlers remain untouched.
     """
 
     class Formatter(logging.Formatter):
-        """
-        Preserve Rich markup messages while formatting ordinary log records.
-        """
+        """Preserve Rich markup messages while formatting normal records."""
 
         def format(self,
                    record: logging.LogRecord) -> str:
             if hasattr(record, "markup"):
                 return str(record.msg)
-
             return super().format(record)
 
     class TarRotatingFileHandler(RotatingFileHandler):
-        """
-        Rotate log files and optionally archive completed rotations as tar.gz.
-        """
+        """Rotate log files and optionally archive completed rotations."""
 
         def __init__(self,
                      name: str,
@@ -204,12 +388,7 @@ class ObjectLogger(logging.Logger):
             self.archive_base_filename = self.baseFilename[:self.baseFilename.rfind(".")] if "." in self.baseFilename else self.baseFilename
 
         def doRollover(self) -> None:
-            """
-            Rotate the active file and archive a complete backup generation.
-            """
-
             super().doRollover()
-
             if self.backupCount <= 0 or self.archive_backup_count <= 0:
                 return
 
@@ -217,14 +396,12 @@ class ObjectLogger(logging.Logger):
             backup_logs = [Path(backup_log_pattern % index)
                            for index in range(1, self.backupCount + 1)]
             backup_logs = [log for log in backup_logs if log.exists()]
-
             if len(backup_logs) < self.backupCount:
                 return
 
             archive_filename_pattern = self.archive_base_filename + "_logs.%d.tar.gz"
             archive_index = 0
             archive_filename = Path(archive_filename_pattern % archive_index)
-
             while archive_filename.exists():
                 archive_index += 1
                 archive_filename = Path(archive_filename_pattern % archive_index)
@@ -246,31 +423,14 @@ class ObjectLogger(logging.Logger):
         super().__init__(name=name,
                          level=level)
         self._managed_handlers: list[logging.Handler] = []
-        self._object_logger_config: ObjectLoggerConfig | None = None
+        self._resolved_config: _ResolvedObjectLoggerConfig | None = None
 
     def configure(self,
-                  config: ObjectLoggerConfig,
+                  config: _ResolvedObjectLoggerConfig,
                   parent_logger: logging.Logger | None,
                   *,
-                  _framework_call: bool = False) -> None:
-        """
-        Apply one complete object-logger configuration atomically.
-
-        Direct reconfiguration is forbidden after a logger has been configured
-        with ``follow_parent=True``. Such loggers are controlled by their object
-        hierarchy. The framework itself may refresh them after initialization
-        or re-parenting through the private ``_framework_call`` flag.
-        """
-
-        if (not _framework_call
-                and self._object_logger_config is not None
-                and self._object_logger_config.follow_parent):
-            raise LoggerConfigurationError(f"Logger {self.name!r} follows its parent and cannot be "
-                                           "reconfigured directly. Configure the object at registration "
-                                           "time or start it with follow_parent=False.")
-
-        if not isinstance(config, ObjectLoggerConfig):
-            raise LoggerConfigurationError(f"config must be an {ObjectLoggerConfig.__name__} instance.")
+                  path_values: Mapping[str, str]) -> None:
+        """Apply a complete effective configuration atomically."""
 
         for handler in tuple(self._managed_handlers):
             if handler in self.handlers:
@@ -282,16 +442,10 @@ class ObjectLogger(logging.Logger):
 
         self.disabled = config.disabled
         self.setLevel(logging.NOTSET if config.level is None else config.level)
-
-        if config.follow_parent:
-            self.parent = parent_logger if parent_logger is not None else logging.getLogger()
-            self.propagate = True
-        else:
-            self.parent = None
-            self.propagate = False
+        self.parent = parent_logger
+        self.propagate = config.propagate and parent_logger is not None
 
         configured_handlers: list[logging.Handler] = []
-
         if config.console and not config.disabled:
             console_handler = RichHandler(console=AdminHelperConsole,
                                           show_time=config.console_rich_show_time,
@@ -305,10 +459,12 @@ class ObjectLogger(logging.Logger):
             configured_handlers.append(console_handler)
 
         if config.file and not config.disabled:
-            if config.file_path is None:
-                raise ValueError(f"File logging is enabled for {self.name!r}, but file_path is not set.")
+            try:
+                rendered_path = str(config.file_path).format_map(path_values)
+            except KeyError as error:
+                raise LoggerConfigurationError(f"Unknown file_path placeholder {error.args[0]!r} for logger {self.name!r}.") from error
 
-            file_path = Path(config.file_path)
+            file_path = Path(rendered_path)
             if not file_path.parent.exists():
                 raise FileNotFoundError(f"Log file parent directory does not exist: {file_path.parent!s}")
 
@@ -325,7 +481,10 @@ class ObjectLogger(logging.Logger):
             file_handler.setFormatter(self.Formatter(config.file_format))
             configured_handlers.append(file_handler)
 
-        for handler in config.handlers:
+        for factory in config.handler_factories:
+            handler = factory()
+            if not isinstance(handler, logging.Handler):
+                raise LoggerConfigurationError("Every handler factory must return logging.Handler.")
             if config.formatter is not None:
                 handler.setFormatter(config.formatter)
             configured_handlers.append(handler)
@@ -334,26 +493,29 @@ class ObjectLogger(logging.Logger):
             self.addHandler(handler)
             self._managed_handlers.append(handler)
 
-        self._object_logger_config = config
+        self._resolved_config = config
 
 
 def _get_object_logger(name: str,
                        logger_class: type[ObjectLogger] = ObjectLogger) -> ObjectLogger:
-    """
-    Return the requested ``ObjectLogger`` subclass without changing the
-    application's global logger class permanently.
-    """
+    """Return or create the requested ``ObjectLogger`` subclass."""
 
     if not isinstance(logger_class, type) or not issubclass(logger_class, ObjectLogger):
-        raise LoggerConfigurationError(f"logger_class must inherit from {ObjectLogger.__name__}, "
-                                       f"got {logger_class!r}.")
+        raise LoggerConfigurationError(f"logger_class must inherit from {ObjectLogger.__name__}, got {logger_class!r}.")
 
     existing = logging.Logger.manager.loggerDict.get(name)
     if isinstance(existing, logger_class):
         return existing
+    if isinstance(existing, ObjectLogger):
+        try:
+            replacement = logger_class(name)
+        except Exception as error:
+            raise LoggerConfigurationError(f"Could not replace logger {name!r} with {logger_class.__name__}: {error}") from error
+        replacement.manager = logging.Logger.manager
+        logging.Logger.manager.loggerDict[name] = replacement
+        return replacement
     if isinstance(existing, logging.Logger):
-        raise LoggerConfigurationError(f"Logger {name!r} already exists as {type(existing).__name__}, "
-                                       f"not {logger_class.__name__}.")
+        raise LoggerConfigurationError(f"Logger {name!r} already exists as {type(existing).__name__}, not {logger_class.__name__}.")
 
     previous_logger_class = logging.getLoggerClass()
     logging.setLoggerClass(logger_class)
@@ -364,7 +526,6 @@ def _get_object_logger(name: str,
 
     if not isinstance(logger, logger_class):
         raise LoggerConfigurationError(f"Could not create {logger_class.__name__} {name!r}.")
-
     return logger
 
 
@@ -644,9 +805,13 @@ class _ObjectRegistry:
         # Emit the creation message through the future object logger. It has no
         # handlers by default and therefore follows normal parent/root logging.
         configured_logger = registration.constructor_kwargs.get("logger_config")
-        logger_class = (configured_logger.resolved_logger_class
-                        if isinstance(configured_logger, ObjectLoggerConfig)
-                        else ObjectLogger)
+        if (isinstance(configured_logger, ObjectLoggerConfig)
+                and isinstance(configured_logger.logger_class, type)):
+            logger_class = configured_logger.logger_class
+        elif parent_instance is not None:
+            logger_class = parent_instance._resolved_logger_config.logger_class
+        else:
+            logger_class = ObjectLogger
         construction_logger = _get_object_logger(name=object_name,
                                                  logger_class=logger_class)
         construction_logger.debug("Instantiating object %s from %s.%s",
@@ -1532,6 +1697,8 @@ class BaseObject(ABC):
     logger_config: ObjectLoggerConfig = field(default_factory=ObjectLoggerConfig,
                                               repr=False,
                                               kw_only=True)
+    _resolved_logger_config: _ResolvedObjectLoggerConfig = field(init=False,
+                                                                 repr=False)
 
     # Private mutable framework state.
     #
@@ -1582,6 +1749,13 @@ class BaseObject(ABC):
         if self._abstract:
             raise AttributeError(f"Object {self.name!r} is abstract and cannot be instantiated.")
 
+        # Every concrete object owns an independent mutable config instance.
+        # This is required when one template registration creates multiple
+        # objects below different concrete parents.
+        configured_logger_config = self.logger_config.copy()
+        object.__setattr__(self, "logger_config", configured_logger_config)
+        configured_logger_config._bind(self._configure_logger_tree)
+
         # Create and configure the object logger before attaching the node. The
         # logger starts without handlers and forwards records to its parent by
         # default. Root loggers forward to Python's root logger.
@@ -1612,14 +1786,13 @@ class BaseObject(ABC):
         # Before initialization, dataclass and framework assignments must pass.
         # Afterwards, only fields explicitly marked frozen are protected.
         initialized = getattr(self, "_initialized", False)
-        if initialized and key == "logger_config":
-            current_config = getattr(self, "logger_config", None)
-            if isinstance(current_config, ObjectLoggerConfig) and current_config.follow_parent:
-                raise LoggerConfigurationError(f"Logger {self.name!r} follows its parent and its logger_config "
-                                               "cannot be replaced at runtime. Configure it through @register(...) "
-                                               "or initialize it with follow_parent=False.")
+        if key == "logger_config":
             if not isinstance(value, ObjectLoggerConfig):
                 raise LoggerConfigurationError(f"logger_config must be an {ObjectLoggerConfig.__name__} instance.")
+            value = value.copy()
+            current_config = getattr(self, "logger_config", None)
+            if isinstance(current_config, ObjectLoggerConfig):
+                current_config._unbind()
 
         if initialized:
             dataclass_field = next((dataclass_field for dataclass_field in fields(self) if dataclass_field.name == key), None)
@@ -1631,42 +1804,69 @@ class BaseObject(ABC):
         # Logger configuration fields are intentionally mutable. Reapply the
         # complete configuration after each change so parent linkage, level,
         # handlers, and formatter can never drift apart.
-        if initialized and key == "logger_config":
-            self._configure_logger_tree()
+        if key == "logger_config":
+            self.logger_config._bind(self._configure_logger_tree)
+            if initialized:
+                self._configure_logger_tree()
 
     def _configure_logger(self) -> None:
         """
-        Create or refresh this object's logger from ``logger_config``.
+        Resolve the inheritable configuration and refresh this object's logger.
 
-        A default configuration installs no handlers and forwards records to
-        the parent object's logger. Root objects forward to Python's root
-        logger. Replacing ``logger_config`` after initialization automatically
-        reapplies the complete configuration to this object and its descendants.
-
-        :return: None
+        The parent object's effective config is used only as a configuration
+        source. The actual logging parent is selected independently through
+        ``logger_config.parent``.
         """
+
+        parent_config = (self.parent._resolved_logger_config
+                         if self.parent is not None
+                         else None)
+        resolved_config = self.logger_config.resolve(parent_config)
+        object.__setattr__(self, "_resolved_logger_config", resolved_config)
 
         previous_logger = getattr(self, "logger", None)
         logger = _get_object_logger(name=self.name,
-                                    logger_class=self.logger_config.resolved_logger_class)
+                                    logger_class=resolved_config.logger_class)
 
-        # A renamed object receives another named logger. Clear the previous
-        # framework-managed configuration before switching references.
         if isinstance(previous_logger, ObjectLogger) and previous_logger is not logger:
-            previous_logger.configure(ObjectLoggerConfig(follow_parent=False,
-                                                         disabled=True),
+            previous_logger.configure(config=ObjectLoggerConfig._framework_defaults(),
                                       parent_logger=None,
-                                      _framework_call=True)
+                                      path_values=self._logger_path_values())
+            previous_logger.disabled = True
 
         object.__setattr__(self, "logger", logger)
-        logger.configure(config=self.logger_config,
-                         parent_logger=self.parent.logger if self.parent is not None else None,
-                         _framework_call=True)
-        logger.debug("Configured object logger %s: follow_parent=%s, level=%s, handlers=%d",
+        logger.configure(config=resolved_config,
+                         parent_logger=self._resolve_logger_parent(resolved_config.parent),
+                         path_values=self._logger_path_values())
+        logger.debug("Configured object logger %s: parent=%r, level=%s, handlers=%d",
                      logger.name,
-                     self.logger_config.follow_parent,
+                     resolved_config.parent,
                      logging.getLevelName(logger.level),
                      len(logger.handlers))
+
+    def _resolve_logger_parent(self,
+                               parent: LoggerParent | str) -> logging.Logger | None:
+        """Resolve the configured logging parent independently of config inheritance."""
+
+        if parent is LoggerParent.OBJECT_PARENT:
+            return self.parent.logger if self.parent is not None else logging.getLogger()
+        if parent is LoggerParent.ROOT:
+            return logging.getLogger()
+        if parent is LoggerParent.NONE:
+            return None
+        return logging.getLogger(parent)
+
+    def _logger_path_values(self) -> dict[str, str]:
+        """Return supported placeholders for file-path templates."""
+
+        parent_name = self.parent.name if self.parent is not None else ""
+        root_name = self.root_parent.registration_name
+        return {"name": self.name,
+                "name_path": self.name.replace(".", os.sep),
+                "registration_name": self.registration_name,
+                "parent_name": parent_name,
+                "parent_path": parent_name.replace(".", os.sep),
+                "root_name": root_name}
 
     def _configure_logger_tree(self) -> None:
         """
@@ -2100,36 +2300,27 @@ class ApacheObjectLogger(ObjectLogger):
         self.info("[apache] " + message, *args)
 
 
-# The root object owns the central console and application-file handlers.
-# ``follow_parent=False`` prevents duplicate output through Python's root logger
-# after the object tree has been initialized. All descendants use their default
-# configuration and therefore forward records to this logger.
-_APP_LOGGER_CONFIG = ObjectLoggerConfig(follow_parent=False,
+# The root object defines the initial effective profile. Descendants inherit
+# every value that remains set to LoggerConfigValue.INHERIT. The actual logger
+# parent is controlled independently through ``parent``.
+_APP_LOGGER_CONFIG = ObjectLoggerConfig(parent=LoggerParent.NONE,
+                                        propagate=False,
                                         level=logging.DEBUG,
                                         console=True,
                                         console_level=logging.DEBUG,
                                         console_format="%(message)s",
-                                        file=True,
-                                        file_path=_EXAMPLE_LOG_DIRECTORY / "application.log",
+                                        file=False,
                                         file_level=logging.DEBUG,
                                         file_format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
                                         file_max_bytes=1_000_000,
                                         file_backup_count=3,
                                         file_archive_backup_count=2)
 
-# This profile is used only by ``apache_2``. Its records are written to a
-# dedicated rotating file and still propagate to App, so they also appear in
-# the central console and application.log.
+# apache_2 overrides only two values. All remaining values follow App's
+# effective configuration. Enabling file logging uses the inherited default
+# template ``logs/{name}.log`` and therefore creates logs/app.apache_2.log.
 _APACHE_2_LOGGER_CONFIG = ObjectLoggerConfig(logger_class=ApacheObjectLogger,
-                                             follow_parent=True,
-                                             level=logging.DEBUG,
-                                             file=True,
-                                             file_path=_EXAMPLE_LOG_DIRECTORY / "apache_2.log",
-                                             file_level=logging.DEBUG,
-                                             file_format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-                                             file_max_bytes=500_000,
-                                             file_backup_count=2,
-                                             file_archive_backup_count=2)
+                                             file=True)
 
 @register(abstract=True,
           name="apache_object")
@@ -2220,12 +2411,15 @@ if __name__ == "__main__":
     if isinstance(apache_2.logger, ApacheObjectLogger):
         apache_2.logger.apache_event("Custom ApacheObjectLogger method called for %s", apache_2.name)
 
-    # A logger that follows its parent is hierarchy-managed. Runtime replacement
-    # of its complete configuration therefore raises LoggerConfigurationError.
-    try:
-        static_files_2_a.logger_config = ObjectLoggerConfig(follow_parent=False,
-                                                            level=logging.DEBUG)
-    except LoggerConfigurationError as error:
-        static_files_2_a.logger.warning("Expected logger reconfiguration error: %s", error)
+    # Every attribute can be changed dynamically. Setting a value to INHERIT
+    # removes the local override and restores inheritance from the parent config.
+    static_files_2_a.logger_config.file = True
+    static_files_2_a.logger.info("This object now writes to logs/app.apache_2.static_files.log")
+    static_files_2_a.logger_config.file = LoggerConfigValue.INHERIT
+
+    # The real logging parent can be selected independently from config inheritance.
+    apache_2.logger_config.parent = LoggerParent.ROOT
+    apache_2.logger.warning("This message now propagates directly to the root logger")
+    apache_2.logger_config.parent = LoggerParent.OBJECT_PARENT
 
     print()
