@@ -22,6 +22,7 @@ import logging
 import os
 import re
 import tarfile
+import warnings
 
 from collections import Counter
 from threading import RLock
@@ -34,7 +35,7 @@ from dataclasses import MISSING, Field, dataclass, field, fields, replace
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from enum import Enum
-from typing import Any, TypeVar, cast, dataclass_transform, overload, Literal
+from typing import Any, Generic, TypeVar, cast, dataclass_transform, get_type_hints, overload, Literal
 
 from rich.logging import RichHandler
 
@@ -55,32 +56,43 @@ from admin_helper.settings import AdminHelperSettings
 __all__ = [
     "AmbiguousObjectNameError",
     "BaseObject",
+    "ComputedFieldInfo",
+    "DEFAULT_EMPTY_FIELD_VALUES",
     "DuplicateObjectNameError",
     "DuplicateRegistrationNameError",
-    "DEFAULT_EMPTY_FIELD_VALUES",
+    "FIELD_INFO_METADATA_KEY",
+    "FieldInfo",
+    "LoggerConfigValue",
+    "LoggerConfigurationError",
+    "LoggerContextConfig",
+    "LoggerContextLevels",
+    "LoggerContextStatus",
+    "LoggerParent",
     "MASKED_FIELD_VALUE",
     "NOT_SET_FIELD_VALUE",
-    "display_field",
-    "internal_field",
-    "masked_field",
-    "object_field",
-    "read_only_field",
+    "ObjectFieldDefinition",
+    "ObjectFieldSource",
     "ObjectLogger",
     "ObjectLoggerConfig",
     "ObjectLoggerContexts",
-    "LoggerContextLevels",
-    "LoggerContextStatus",
     "ObjectStatus",
-    "LoggerConfigValue",
-    "LoggerParent",
-    "LoggerConfigurationError",
     "ObjectTreeLoopError",
     "ParentResolutionError",
     "RegistryError",
+    "SENSITIVE_VALUE_FILTER_MODE",
+    "SensitiveValueFilterMode",
     "UnregisteredSubclassError",
+    "computed_field",
+    "display_field",
+    "get_object_fields",
     "initialize_objects",
+    "internal_field",
     "is_abstract",
+    "masked_field",
+    "object_field",
     "object_registry",
+    "read_only_field",
+    "refresh_sensitive_values",
     "register",
 ]
 
@@ -115,17 +127,10 @@ def _format_log_value(value: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Public dataclass-field helpers and sensitive-value protection
+# Public dataclass-field helpers, computed fields, and sensitive-value protection
 # ---------------------------------------------------------------------------
 
-_FIELD_FROZEN = "frozen"
-_FIELD_INTERNAL = "internal"
-_FIELD_MASKED = "masked"
-_FIELD_DISPLAY = "display"
-_FIELD_EMPTY_VALUES = "empty_values"
-
-# Public presentation defaults used by every masked field unless a field adds
-# further empty values through ``masked_field(empty_values=...)``.
+FIELD_INFO_METADATA_KEY = "field_info"
 MASKED_FIELD_VALUE = "<MASKED>"
 NOT_SET_FIELD_VALUE = "<NOT SET>"
 DEFAULT_EMPTY_FIELD_VALUES: tuple[Any, ...] = (
@@ -140,25 +145,136 @@ DEFAULT_EMPTY_FIELD_VALUES: tuple[Any, ...] = (
 )
 
 
-def _build_object_field(*,
-                        default: Any = MISSING,
-                        default_factory: Any = MISSING,
-                        init: bool = True,
-                        repr: bool = True,
-                        compare: bool = True,
-                        hash: bool | None = None,
-                        kw_only: bool | Any = MISSING,
-                        frozen: bool = False,
-                        internal: bool = False,
-                        masked: bool = False,
-                        display: bool = False,
-                        empty_values: Iterable[Any] = (),
-                        metadata: Mapping[str, Any] | None = None) -> Field[Any]:
-    """
-    Build one dataclass field with framework metadata.
+class SensitiveValueFilterMode(Enum):
+    """Select which sensitive values are cached by the global log filter."""
 
-    This private helper centralizes the repetitive ``dataclasses.field``
-    arguments used by all public field factories.
+    DISABLED = "disabled"
+    FIELDS = "fields"
+    FIELDS_AND_COMPUTED = "fields_and_computed"
+
+
+SENSITIVE_VALUE_FILTER_MODE = SensitiveValueFilterMode.FIELDS
+
+
+@dataclass(frozen=True, slots=True)
+class FieldInfo:
+    """
+    Store framework metadata for one normal dataclass field.
+
+    :param title:
+        The human-readable title used by generated interfaces.
+
+    :param description:
+        The longer explanation used by generated interfaces.
+
+    :param frozen:
+        Whether the value becomes read-only after object initialization.
+
+    :param internal:
+        Whether the value is reserved for internal implementation details.
+
+    :param masked:
+        Whether the value must be hidden in visual output and managed logs.
+
+    :param display:
+        Whether the value is included in ``BaseObject.__str__``.
+
+    :param empty_values:
+        Additional values treated as not set for this field.
+    """
+
+    title: str | None = None
+    description: str | None = None
+    frozen: bool = False
+    internal: bool = False
+    masked: bool = False
+    display: bool = False
+    empty_values: tuple[Any, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ComputedFieldInfo(FieldInfo):
+    """Store framework metadata for one computed field."""
+
+    as_property: bool = True
+
+
+class ObjectFieldSource(Enum):
+    """Identify whether a queried field is stored or computed."""
+
+    DATACLASS = "dataclass"
+    COMPUTED = "computed"
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectFieldDefinition:
+    """Describe one stored or computed field exposed by an object class."""
+
+    name: str
+    owner: type[Any]
+    annotation: Any
+    info: FieldInfo
+    source: ObjectFieldSource
+    dataclass_field: Field[Any] | None = None
+    descriptor: property | Callable[..., Any] | None = None
+
+    def get_value(self,
+                  obj: Any) -> Any:
+        """
+        Read the field value from an object instance.
+
+        :param obj:
+            The object instance from which the field is read.
+
+        :return:
+            Returns the current field value.
+        """
+
+        value = getattr(obj, self.name)
+        if self.source is ObjectFieldSource.COMPUTED and callable(value):
+            return value()
+        return value
+
+
+_UNSET = object()
+
+
+def _warn_field_conflict(message: str) -> None:
+    warnings.warn(message, UserWarning, stacklevel=3)
+
+
+def object_field(*,
+                 default: Any = MISSING,
+                 default_factory: Any = MISSING,
+                 init: bool | object = _UNSET,
+                 repr: bool | object = _UNSET,
+                 compare: bool | object = _UNSET,
+                 hash: bool | None = None,
+                 kw_only: bool | Any = MISSING,
+                 frozen: bool = False,
+                 internal: bool = False,
+                 masked: bool = False,
+                 display: bool = False,
+                 title: str | None = None,
+                 description: str | None = None,
+                 empty_values: Iterable[Any] = (),
+                 metadata: Mapping[str, Any] | None = None) -> Field[Any]:
+    """
+    Define a framework-aware dataclass field.
+
+    The switches are resolved centrally. Hard incompatibilities raise an
+    exception, while harmless explicit options that must be overridden emit a
+    warning.
+
+    Examples:
+        password: str = object_field(masked=True, display=True)
+            Creates a displayed field whose actual value is never rendered.
+
+        _cache: dict[str, Any] = object_field(
+            internal=True,
+            default_factory=dict,
+        )
+            Creates an implementation-only field excluded from the constructor.
 
     :param default:
         The default value assigned to the field.
@@ -185,19 +301,25 @@ def _build_object_field(*,
         Whether reassignment is blocked after object initialization.
 
     :param internal:
-        Whether the field is reserved for framework-internal use.
+        Whether the field is reserved for internal implementation details.
 
     :param masked:
-        Whether the field value must be hidden in representations and logs.
+        Whether the value is hidden in visual output and managed logs.
 
     :param display:
-        Whether the field adds useful information to ``BaseObject.__str__``.
+        Whether the value is included in ``BaseObject.__str__``.
+
+    :param title:
+        The human-readable title stored in ``FieldInfo``.
+
+    :param description:
+        The longer description stored in ``FieldInfo``.
 
     :param empty_values:
-        Additional field-specific values treated as not set when masked.
+        Additional field-specific values treated as not set.
 
     :param metadata:
-        Additional metadata merged with the framework metadata.
+        Additional metadata stored alongside ``FieldInfo``.
 
     :return:
         Returns the configured dataclass field.
@@ -206,344 +328,248 @@ def _build_object_field(*,
     if default is not MISSING and default_factory is not MISSING:
         raise ValueError("default and default_factory cannot be used together.")
 
-    field_metadata = dict(metadata or {})
-    field_metadata.update({_FIELD_FROZEN: frozen,
-                           _FIELD_INTERNAL: internal,
-                           _FIELD_MASKED: masked,
-                           _FIELD_DISPLAY: display,
-                           _FIELD_EMPTY_VALUES: tuple(empty_values)})
+    resolved_init = True if init is _UNSET else bool(init)
+    resolved_repr = True if repr is _UNSET else bool(repr)
+    resolved_compare = True if compare is _UNSET else bool(compare)
 
-    # A masked value must never be exposed by the generated dataclass repr.
-    if masked:
-        repr = False
+    if internal:
+        if init is not _UNSET and resolved_init:
+            _warn_field_conflict("Internal fields cannot be constructor parameters; init=True was ignored.")
+        if repr is not _UNSET and resolved_repr:
+            _warn_field_conflict("Internal fields cannot appear in repr; repr=True was ignored.")
+        if compare is not _UNSET and resolved_compare:
+            _warn_field_conflict("Internal fields do not participate in comparisons; compare=True was ignored.")
+        if display:
+            _warn_field_conflict("Internal fields cannot be display fields; display=True was ignored.")
+        resolved_init = False
+        resolved_repr = False
+        resolved_compare = False
+        display = False
+
+    if masked and resolved_repr:
+        if repr is not _UNSET:
+            _warn_field_conflict("Masked fields cannot appear in the dataclass repr; repr=True was ignored.")
+        resolved_repr = False
+
+    info = FieldInfo(title=title,
+                     description=description,
+                     frozen=frozen,
+                     internal=internal,
+                     masked=masked,
+                     display=display,
+                     empty_values=tuple(empty_values))
+    field_metadata = dict(metadata or {})
+    if FIELD_INFO_METADATA_KEY in field_metadata:
+        raise ValueError(f"metadata key {FIELD_INFO_METADATA_KEY!r} is reserved by the framework.")
+    field_metadata[FIELD_INFO_METADATA_KEY] = info
 
     return field(default=default,
                  default_factory=default_factory,
-                 init=init,
-                 repr=repr,
+                 init=resolved_init,
+                 repr=resolved_repr,
                  hash=hash,
-                 compare=compare,
+                 compare=resolved_compare,
                  metadata=field_metadata,
                  kw_only=kw_only)
 
 
-def object_field(*,
-                 default: Any = MISSING,
-                 default_factory: Any = MISSING,
-                 init: bool = True,
-                 repr: bool = True,
-                 compare: bool = True,
-                 hash: bool | None = None,
-                 kw_only: bool | Any = MISSING,
-                 frozen: bool = False,
-                 masked: bool = False,
-                 display: bool = False,
-                 empty_values: Iterable[Any] = (),
-                 metadata: Mapping[str, Any] | None = None) -> Field[Any]:
-    """
-    Define a normal public workload field.
+def read_only_field(**kwargs: Any) -> Field[Any]:
+    """Define a public field that becomes read-only after initialization."""
 
-    Use this helper for values that form part of an object's functional
-    configuration or runtime workload.
+    return object_field(frozen=True, **kwargs)
+
+
+def internal_field(**kwargs: Any) -> Field[Any]:
+    """Define an implementation-only field excluded from public dataclass APIs."""
+
+    return object_field(internal=True, **kwargs)
+
+
+def display_field(**kwargs: Any) -> Field[Any]:
+    """Define a field included in the concise object representation."""
+
+    return object_field(display=True, **kwargs)
+
+
+def masked_field(**kwargs: Any) -> Field[Any]:
+    """Define a field whose actual value is hidden in visual output and logs."""
+
+    return object_field(masked=True, display=True, **kwargs)
+
+
+def computed_field(*,
+                   title: str | None = None,
+                   description: str | None = None,
+                   frozen: bool = True,
+                   internal: bool = False,
+                   masked: bool = False,
+                   display: bool = False,
+                   empty_values: Iterable[Any] = (),
+                   as_property: bool = True) -> Callable[[Callable[..., Any]], property | Callable[..., Any]]:
+    """
+    Mark a method as a computed object field.
+
+    By default, the decorated method is converted into a property. Set
+    ``as_property=False`` when callers should keep explicit control over when
+    the computation runs; the global field-query API still discovers it.
 
     Examples:
-        host: str = object_field(display=True)
-            Exposes ``host`` as a normal constructor argument and includes it
-            in the concise object representation.
+        @computed_field(display=True)
+        def address(self) -> str:
+            return f"{self.host}:{self.port}"
 
-    :param default:
-        The default value assigned to the field.
+    :param title:
+        The human-readable title used by generated interfaces.
 
-    :param default_factory:
-        The callable used to create a default value.
-
-    :param init:
-        Whether the field is included in the generated constructor.
-
-    :param repr:
-        Whether the field is included in the generated dataclass representation.
-
-    :param compare:
-        Whether the field participates in generated comparisons.
-
-    :param hash:
-        Whether the field participates in the generated hash.
-
-    :param kw_only:
-        Whether the field is keyword-only.
+    :param description:
+        The longer explanation used by generated interfaces.
 
     :param frozen:
-        Whether reassignment is blocked after object initialization.
+        Whether the computed value is conceptually read-only.
+
+    :param internal:
+        Whether the computed value is an internal implementation detail.
 
     :param masked:
-        Whether the value is hidden from representations and protected logs.
+        Whether the computed value is hidden in visual output and managed logs.
 
     :param display:
-        Whether the value is included in ``BaseObject.__str__``.
+        Whether the computed value is included in ``BaseObject.__str__``.
 
     :param empty_values:
-        Additional values treated as not set when ``masked=True``.
+        Additional values treated as not set.
 
-    :param metadata:
-        Additional metadata attached to the dataclass field.
+    :param as_property:
+        Whether the method is converted into a property automatically.
 
     :return:
-        Returns a public workload field.
+        Returns a decorator for the computed method.
     """
 
-    return _build_object_field(default=default,
-                               default_factory=default_factory,
-                               init=init,
-                               repr=repr,
-                               compare=compare,
-                               hash=hash,
-                               kw_only=kw_only,
-                               frozen=frozen,
-                               masked=masked,
-                               display=display,
-                               empty_values=empty_values,
-                               metadata=metadata)
+    if internal and display:
+        _warn_field_conflict("Internal computed fields cannot be display fields; display=True was ignored.")
+        display = False
+
+    info = ComputedFieldInfo(title=title,
+                             description=description,
+                             frozen=frozen,
+                             internal=internal,
+                             masked=masked,
+                             display=display,
+                             empty_values=tuple(empty_values),
+                             as_property=as_property)
+
+    def decorator(func: Callable[..., Any]) -> property | Callable[..., Any]:
+        setattr(func, "__object_computed_field_info__", info)
+        return property(func) if as_property else func
+
+    return decorator
 
 
-def read_only_field(*,
-                    default: Any = MISSING,
-                    default_factory: Any = MISSING,
-                    init: bool = True,
-                    repr: bool = True,
-                    compare: bool = True,
-                    hash: bool | None = None,
-                    kw_only: bool | Any = MISSING,
-                    masked: bool = False,
-                    display: bool = False,
-                    empty_values: Iterable[Any] = (),
-                    metadata: Mapping[str, Any] | None = None) -> Field[Any]:
+def _field_info(dataclass_field: Field[Any]) -> FieldInfo:
+    value = dataclass_field.metadata.get(FIELD_INFO_METADATA_KEY)
+    return value if isinstance(value, FieldInfo) else FieldInfo()
+
+
+def get_object_fields(obj_or_cls: Any,
+                      *,
+                      name: str | None = None,
+                      display: bool | None = None,
+                      masked: bool | None = None,
+                      internal: bool | None = None,
+                      frozen: bool | None = None,
+                      computed: bool | None = None) -> tuple[ObjectFieldDefinition, ...]:
     """
-    Define a public field that becomes read-only after initialization.
+    Query stored and computed fields through one stable interface.
 
     Examples:
-        identifier: str = read_only_field(display=True)
-            Accepts the identifier during construction and prevents later
-            reassignment.
+        get_object_fields(database, display=True)
+            Returns all fields included in the concise representation.
 
-    :param default:
-        The default value assigned to the field.
+        get_object_fields(DatabaseService, masked=True, computed=False)
+            Returns only stored masked dataclass fields.
 
-    :param default_factory:
-        The callable used to create a default value.
+    :param obj_or_cls:
+        The object instance or class whose fields are inspected.
 
-    :param init:
-        Whether the field is included in the generated constructor.
+    :param name:
+        Optional exact field name.
 
-    :param repr:
-        Whether the field is included in the generated dataclass representation.
-
-    :param compare:
-        Whether the field participates in generated comparisons.
-
-    :param hash:
-        Whether the field participates in the generated hash.
-
-    :param kw_only:
-        Whether the field is keyword-only.
+    :param display:
+        Optional filter for display fields.
 
     :param masked:
-        Whether the value is hidden from representations and protected logs.
+        Optional filter for masked fields.
 
-    :param display:
-        Whether the value is included in ``BaseObject.__str__``.
-
-    :param empty_values:
-        Additional values treated as not set when ``masked=True``.
-
-    :param metadata:
-        Additional metadata attached to the dataclass field.
-
-    :return:
-        Returns a public read-only field.
-    """
-
-    return _build_object_field(default=default,
-                               default_factory=default_factory,
-                               init=init,
-                               repr=repr,
-                               compare=compare,
-                               hash=hash,
-                               kw_only=kw_only,
-                               frozen=True,
-                               masked=masked,
-                               display=display,
-                               empty_values=empty_values,
-                               metadata=metadata)
-
-
-def internal_field(*,
-                   default: Any = MISSING,
-                   default_factory: Any = MISSING,
-                   frozen: bool = False,
-                   metadata: Mapping[str, Any] | None = None) -> Field[Any]:
-    """
-    Define a private framework field excluded from initialization and display.
-
-    Examples:
-        _cache: dict[str, Any] = internal_field(default_factory=dict)
-            Creates private mutable state without exposing it in the generated
-            constructor or representation.
-
-    :param default:
-        The default value assigned to the field.
-
-    :param default_factory:
-        The callable used to create a default value.
+    :param internal:
+        Optional filter for internal fields.
 
     :param frozen:
-        Whether reassignment is blocked after object initialization.
+        Optional filter for read-only fields.
 
-    :param metadata:
-        Additional metadata attached to the dataclass field.
-
-    :return:
-        Returns an internal framework field.
-    """
-
-    return _build_object_field(default=default,
-                               default_factory=default_factory,
-                               init=False,
-                               repr=False,
-                               compare=False,
-                               frozen=frozen,
-                               internal=True,
-                               metadata=metadata)
-
-
-def display_field(*,
-                  default: Any = MISSING,
-                  default_factory: Any = MISSING,
-                  init: bool = True,
-                  repr: bool = True,
-                  compare: bool = True,
-                  hash: bool | None = None,
-                  kw_only: bool | Any = MISSING,
-                  frozen: bool = False,
-                  metadata: Mapping[str, Any] | None = None) -> Field[Any]:
-    """
-    Define a workload field shown in the concise object representation.
-
-    :param default:
-        The default value assigned to the field.
-
-    :param default_factory:
-        The callable used to create a default value.
-
-    :param init:
-        Whether the field is included in the generated constructor.
-
-    :param repr:
-        Whether the field is included in the generated dataclass representation.
-
-    :param compare:
-        Whether the field participates in generated comparisons.
-
-    :param hash:
-        Whether the field participates in the generated hash.
-
-    :param kw_only:
-        Whether the field is keyword-only.
-
-    :param frozen:
-        Whether reassignment is blocked after object initialization.
-
-    :param metadata:
-        Additional metadata attached to the dataclass field.
+    :param computed:
+        ``True`` selects computed fields, ``False`` selects stored fields, and
+        ``None`` includes both.
 
     :return:
-        Returns a display-enabled workload field.
+        Returns an immutable tuple containing the matching field definitions.
     """
 
-    return _build_object_field(default=default,
-                               default_factory=default_factory,
-                               init=init,
-                               repr=repr,
-                               compare=compare,
-                               hash=hash,
-                               kw_only=kw_only,
-                               frozen=frozen,
-                               display=True,
-                               metadata=metadata)
+    cls = obj_or_cls if isinstance(obj_or_cls, type) else type(obj_or_cls)
+    annotations: dict[str, Any] = {}
+    for owner in reversed(cls.__mro__):
+        try:
+            annotations.update(get_type_hints(owner))
+        except Exception:
+            annotations.update(getattr(owner, "__annotations__", {}))
 
+    result: list[ObjectFieldDefinition] = []
+    if computed is not True:
+        for item in fields(cls):
+            info = _field_info(item)
+            result.append(ObjectFieldDefinition(name=item.name,
+                                                owner=cls,
+                                                annotation=annotations.get(item.name, Any),
+                                                info=info,
+                                                source=ObjectFieldSource.DATACLASS,
+                                                dataclass_field=item))
 
-def masked_field(*,
-                 default: Any = MISSING,
-                 default_factory: Any = MISSING,
-                 init: bool = True,
-                 compare: bool = True,
-                 hash: bool | None = None,
-                 kw_only: bool | Any = MISSING,
-                 frozen: bool = False,
-                 display: bool = True,
-                 empty_values: Iterable[Any] = (),
-                 metadata: Mapping[str, Any] | None = None) -> Field[Any]:
-    """
-    Define a sensitive workload field that is masked in all framework output.
+    if computed is not False:
+        seen: set[str] = set()
+        for owner in cls.__mro__:
+            for item_name, descriptor in vars(owner).items():
+                if item_name in seen:
+                    continue
+                func = descriptor.fget if isinstance(descriptor, property) else descriptor
+                info = getattr(func, "__object_computed_field_info__", None)
+                if not isinstance(info, ComputedFieldInfo):
+                    continue
+                seen.add(item_name)
+                result.append(ObjectFieldDefinition(name=item_name,
+                                                    owner=owner,
+                                                    annotation=getattr(func, "__annotations__", {}).get("return", Any),
+                                                    info=info,
+                                                    source=ObjectFieldSource.COMPUTED,
+                                                    descriptor=descriptor))
 
-    A set value appears as ``<MASKED>`` in ``BaseObject.__str__``. Values
-    considered empty appear as ``<NOT SET>``. The generated
-    dataclass representation always excludes the raw value.
+    def matches(item: ObjectFieldDefinition) -> bool:
+        if name is not None and item.name != name:
+            return False
+        if display is not None and item.info.display is not display:
+            return False
+        if masked is not None and item.info.masked is not masked:
+            return False
+        if internal is not None and item.info.internal is not internal:
+            return False
+        if frozen is not None and item.info.frozen is not frozen:
+            return False
+        return True
 
-    Examples:
-        password: str = masked_field()
-            Accepts a password while preventing its plaintext value from
-            appearing in object representations and managed log handlers.
-
-    :param default:
-        The default value assigned to the field.
-
-    :param default_factory:
-        The callable used to create a default value.
-
-    :param init:
-        Whether the field is included in the generated constructor.
-
-    :param compare:
-        Whether the field participates in generated comparisons.
-
-    :param hash:
-        Whether the field participates in the generated hash.
-
-    :param kw_only:
-        Whether the field is keyword-only.
-
-    :param frozen:
-        Whether reassignment is blocked after object initialization.
-
-    :param display:
-        Whether the masked set-state is included in ``BaseObject.__str__``.
-
-    :param empty_values:
-        Additional values treated as not set for this specific field.
-
-    :param metadata:
-        Additional metadata attached to the dataclass field.
-
-    :return:
-        Returns a masked workload field.
-    """
-
-    return _build_object_field(default=default,
-                               default_factory=default_factory,
-                               init=init,
-                               repr=False,
-                               compare=compare,
-                               hash=hash,
-                               kw_only=kw_only,
-                               frozen=frozen,
-                               masked=True,
-                               display=display,
-                               empty_values=empty_values,
-                               metadata=metadata)
+    return tuple(item for item in result if matches(item))
 
 
 class _SensitiveValueRegistry:
-    """Track masked values and redact them from managed logging output."""
+    """Cache sensitive values used by the optional defensive logging filter."""
 
     def __init__(self) -> None:
         self._values: Counter[str] = Counter()
@@ -558,6 +584,10 @@ class _SensitiveValueRegistry:
         elif not isinstance(value, str):
             value = str(value)
         return value if value else None
+
+    def clear(self) -> None:
+        with self._lock:
+            self._values.clear()
 
     def register(self,
                  value: Any) -> None:
@@ -582,9 +612,6 @@ class _SensitiveValueRegistry:
     def redact_text(self,
                     value: str) -> str:
         with self._lock:
-            # Embedded replacement of extremely short values would corrupt
-            # unrelated text, timestamps, and numbers. Exact argument matches
-            # are still masked regardless of length by ``sanitize``.
             tokens = sorted((token for token in self._values if len(token) >= 4),
                             key=len,
                             reverse=True)
@@ -594,9 +621,10 @@ class _SensitiveValueRegistry:
 
     def sanitize(self,
                  value: Any) -> Any:
+        if SENSITIVE_VALUE_FILTER_MODE is SensitiveValueFilterMode.DISABLED:
+            return value
         with self._lock:
             tokens = set(self._values)
-
         if isinstance(value, str):
             if value in tokens:
                 return MASKED_FIELD_VALUE
@@ -611,8 +639,7 @@ class _SensitiveValueRegistry:
         if isinstance(value, list):
             return [self.sanitize(item) for item in value]
         if isinstance(value, dict):
-            return {self.sanitize(key): self.sanitize(item)
-                    for key, item in value.items()}
+            return {self.sanitize(key): self.sanitize(item) for key, item in value.items()}
         if str(value) in tokens:
             return MASKED_FIELD_VALUE
         return value
@@ -622,18 +649,16 @@ _sensitive_values = _SensitiveValueRegistry()
 
 
 class _MaskedValueFilter(logging.Filter):
-    """Redact registered masked values before a managed handler formats them."""
+    """Redact cached sensitive values before a managed handler formats them."""
 
     def filter(self,
                record: logging.LogRecord) -> bool:
         record.msg = _sensitive_values.sanitize(record.msg)
         record.args = _sensitive_values.sanitize(record.args)
-
         if hasattr(record, "log_context_data"):
             record.log_context_data = _sensitive_values.sanitize(record.log_context_data)
         if hasattr(record, "log_context_values"):
             record.log_context_values = _sensitive_values.sanitize(record.log_context_values)
-
         return True
 
 
@@ -642,23 +667,17 @@ _masked_value_filter = _MaskedValueFilter()
 
 def _values_equal(value: Any,
                   candidate: Any) -> bool:
-    """Return whether two potential empty values are safely equivalent."""
-
     if type(value) is not type(candidate):
         return False
-
     try:
         result = value == candidate
     except Exception:
         return value is candidate
-
     return result if isinstance(result, bool) else value is candidate
 
 
 def _masked_value_is_set(value: Any,
                          empty_values: Iterable[Any] = ()) -> bool:
-    """Return whether a masked field contains a meaningful value."""
-
     candidates = (*DEFAULT_EMPTY_FIELD_VALUES, *tuple(empty_values))
     return not any(_values_equal(value, candidate) for candidate in candidates)
 
@@ -668,10 +687,28 @@ def _format_display_value(value: Any,
                           masked: bool = False,
                           empty_values: Iterable[Any] = ()) -> str:
     if masked:
-        return (MASKED_FIELD_VALUE
-                if _masked_value_is_set(value, empty_values)
-                else NOT_SET_FIELD_VALUE)
+        return MASKED_FIELD_VALUE if _masked_value_is_set(value, empty_values) else NOT_SET_FIELD_VALUE
     return _format_log_value(value)
+
+
+def refresh_sensitive_values() -> None:
+    """
+    Rebuild the global sensitive-value cache from all instantiated objects.
+
+    Use this after changing ``SENSITIVE_VALUE_FILTER_MODE`` at runtime.
+
+    :return:
+        Returns None.
+    """
+
+    _sensitive_values.clear()
+    if SENSITIVE_VALUE_FILTER_MODE is SensitiveValueFilterMode.DISABLED:
+        return
+    registry = globals().get("object_registry")
+    if registry is None:
+        return
+    for instance in registry.instances():
+        instance._register_masked_fields()
 
 
 # ---------------------------------------------------------------------------
@@ -726,23 +763,29 @@ _logger_context_stack: ContextVar[tuple[_LoggerContextFrame, ...]] = ContextVar(
 
 
 @dataclass(frozen=True, slots=True)
-class _ResolvedLoggerContextLevels:
-    """Complete thresholds for one context after inheritance was resolved."""
+class _ResolvedLoggerContextConfig:
+    """Store complete thresholds and formats for one resolved context."""
 
     disabled: bool
     level: int
     console_level: int
     file_level: int
+    format: str
+    console_format: str
+    file_format: str
 
 
 @dataclass(slots=True)
-class LoggerContextLevels:
-    """Observable level configuration for one named logging context."""
+class LoggerContextConfig:
+    """Configure levels and formats for one named logging context."""
 
     status: LoggerContextStatus = LoggerContextStatus.CONFIGURED
     level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT
     console_level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT
     file_level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT
+    format: str | LoggerConfigValue = LoggerConfigValue.INHERIT
+    console_format: str | LoggerConfigValue = LoggerConfigValue.INHERIT
+    file_format: str | LoggerConfigValue = LoggerConfigValue.INHERIT
 
     _on_change: Callable[[], None] | None = field(default=None,
                                                   init=False,
@@ -754,48 +797,19 @@ class LoggerContextLevels:
                                          compare=False)
 
     def __post_init__(self) -> None:
-        """
-        Validate and finalize the newly created instance.
-
-        :return:
-            Returns None.
-        """
         self._validate()
         object.__setattr__(self, "_notifications_enabled", True)
 
     def __setattr__(self,
                     key: str,
                     value: Any) -> None:
-        """
-        Validate and apply an attribute assignment.
-
-        :param key:
-            The attribute or configuration-field name.
-
-        :param value:
-            The value to validate or assign.
-
-        :return:
-            Returns None.
-        """
-        if (not key.startswith("_")
-                and getattr(self, "_notifications_enabled", False)):
+        if not key.startswith("_") and getattr(self, "_notifications_enabled", False):
             self._validate_value(key, value)
-
         object.__setattr__(self, key, value)
+        if not key.startswith("_") and getattr(self, "_notifications_enabled", False):
+            self._notify()
 
-        if key.startswith("_") or not getattr(self, "_notifications_enabled", False):
-            return
-
-        self._notify()
-
-    def copy(self) -> LoggerContextLevels:
-        """
-        Return an independent copy that is safe to bind to another owner.
-
-        :return:
-            Returns a value of type ``LoggerContextLevels``.
-        """
+    def copy(self) -> LoggerContextConfig:
         result = replace(self)
         object.__setattr__(result, "_on_change", None)
         object.__setattr__(result, "_notifications_enabled", True)
@@ -805,215 +819,101 @@ class LoggerContextLevels:
                   *,
                   level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT,
                   console_level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT,
-                  file_level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT) -> None:
-        """
-        Set all context thresholds and mark the entry as configured.
+                  file_level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT,
+                  format: str | LoggerConfigValue = LoggerConfigValue.INHERIT,
+                  console_format: str | LoggerConfigValue = LoggerConfigValue.INHERIT,
+                  file_format: str | LoggerConfigValue = LoggerConfigValue.INHERIT) -> None:
+        """Apply context-specific level and format overrides."""
 
-        :param level:
-            The logging level to apply.
-
-        :param console_level:
-            The logging level to apply to console handlers.
-
-        :param file_level:
-            The logging level to apply to file handlers.
-
-        :return:
-            Returns None.
-        """
-
-        self._validate_value("level", level)
-        self._validate_value("console_level", console_level)
-        self._validate_value("file_level", file_level)
+        values = {"level": level,
+                  "console_level": console_level,
+                  "file_level": file_level,
+                  "format": format,
+                  "console_format": console_format,
+                  "file_format": file_format}
+        for name, value in values.items():
+            self._validate_value(name, value)
         object.__setattr__(self, "status", LoggerContextStatus.CONFIGURED)
-        object.__setattr__(self, "level", level)
-        object.__setattr__(self, "console_level", console_level)
-        object.__setattr__(self, "file_level", file_level)
+        for name, value in values.items():
+            object.__setattr__(self, name, value)
         self._notify()
 
     def inherit(self) -> None:
-        """
-        Keep the context defined while inheriting its complete parent state.
-
-        :return:
-            Returns None.
-        """
-
         object.__setattr__(self, "status", LoggerContextStatus.INHERIT)
-        object.__setattr__(self, "level", LoggerConfigValue.INHERIT)
-        object.__setattr__(self, "console_level", LoggerConfigValue.INHERIT)
-        object.__setattr__(self, "file_level", LoggerConfigValue.INHERIT)
+        for name in ("level", "console_level", "file_level", "format", "console_format", "file_format"):
+            object.__setattr__(self, name, LoggerConfigValue.INHERIT)
         self._notify()
 
     def disable(self) -> None:
-        """
-        Suppress every record emitted inside this context.
-
-        :return:
-            Returns None.
-        """
-
         object.__setattr__(self, "status", LoggerContextStatus.DISABLED)
         self._notify()
 
     def _bind(self,
               on_change: Callable[[], None]) -> None:
-        """
-        Execute the '_bind' operation.
-
-        :param on_change:
-            The callback invoked after a configuration change.
-
-        :return:
-            Returns None.
-        """
         object.__setattr__(self, "_on_change", on_change)
 
     def _unbind(self) -> None:
-        """
-        Execute the '_unbind' operation.
-
-        :return:
-            Returns None.
-        """
         object.__setattr__(self, "_on_change", None)
 
     def _notify(self) -> None:
-        """
-        Execute the '_notify' operation.
-
-        :return:
-            Returns None.
-        """
-        callback = self._on_change
-        if callback is not None:
-            callback()
+        if self._on_change is not None:
+            self._on_change()
 
     def _validate(self) -> None:
-        """
-        Execute the '_validate' operation.
-
-        :return:
-            Returns None.
-        """
-        self._validate_value("status", self.status)
-        self._validate_value("level", self.level)
-        self._validate_value("console_level", self.console_level)
-        self._validate_value("file_level", self.file_level)
+        for name in ("status", "level", "console_level", "file_level", "format", "console_format", "file_format"):
+            self._validate_value(name, getattr(self, name))
 
     @staticmethod
     def _validate_value(name: str,
                         value: Any) -> None:
-        """
-        Execute the '_validate_value' operation.
-
-        :param name:
-            The name to process.
-
-        :param value:
-            The value to validate or assign.
-
-        :return:
-            Returns None.
-        """
         if name == "status":
             if not isinstance(value, LoggerContextStatus) or value is LoggerContextStatus.UNDEFINED:
-                raise LoggerConfigurationError(
-                    "A stored logging context must use INHERIT, CONFIGURED, or DISABLED.")
+                raise LoggerConfigurationError("A stored logging context must use INHERIT, CONFIGURED, or DISABLED.")
             return
         if value is LoggerConfigValue.INHERIT:
+            return
+        if name.endswith("format") or name == "format":
+            if not isinstance(value, str):
+                raise LoggerConfigurationError(f"{name} must be str or LoggerConfigValue.INHERIT.")
             return
         ObjectLoggerConfig._normalize_level(value)
 
 
+# Backwards-compatible name retained for existing imports.
+LoggerContextLevels = LoggerContextConfig
+
+
 class ObjectLoggerContexts:
-    """Stable interface for context-specific global, console, and file levels."""
+    """Manage named context-specific level and format configurations."""
 
     def __init__(self,
-                 entries: Mapping[str, LoggerContextLevels] | None = None):
-        """
-        Initialize the instance and its private runtime state.
-
-        :param entries:
-            The 'entries' value used by the operation.
-
-        :return:
-            Returns the result of the operation.
-        """
-        self._entries: dict[str, LoggerContextLevels] = {}
+                 entries: Mapping[str, LoggerContextConfig] | None = None):
+        self._entries: dict[str, LoggerContextConfig] = {}
         self._on_change: Callable[[], None] | None = None
         for name, config in (entries or {}).items():
             self._store(name, config.copy(), notify=False)
 
     def __contains__(self,
                      name: str) -> bool:
-        """
-        Return whether the collection contains the supplied value.
-
-        :param name:
-            The name to process.
-
-        :return:
-            Returns True when the condition is satisfied; otherwise, returns False.
-        """
         return self.status(name) is not LoggerContextStatus.UNDEFINED
 
     def __iter__(self) -> Iterator[str]:
-        """
-        Iterate over the stored entries without exposing mutable internals.
-
-        :return:
-            Returns an iterator over the requested values.
-        """
         return iter(self._entries)
 
     def copy(self) -> ObjectLoggerContexts:
-        """
-        Return an independent copy that is safe to bind to another owner.
-
-        :return:
-            Returns an independent context-configuration collection.
-        """
         return ObjectLoggerContexts(self._entries)
 
     def status(self,
                name: str) -> LoggerContextStatus:
-        """
-        Return the explicitly defined state of the requested context.
-
-        :param name:
-            The name to process.
-
-        :return:
-            Returns a value of type ``LoggerContextStatus``.
-        """
         entry = self._entries.get(self._normalize_name(name))
         return entry.status if entry is not None else LoggerContextStatus.UNDEFINED
 
     def get(self,
-            name: str) -> LoggerContextLevels | None:
-        """
-        Return the requested entry when it is defined.
-
-        :param name:
-            The name to process.
-
-        :return:
-            Returns a value of type ``LoggerContextLevels | None``.
-        """
+            name: str) -> LoggerContextConfig | None:
         return self._entries.get(self._normalize_name(name))
 
     def require(self,
-                name: str) -> LoggerContextLevels:
-        """
-        Return the requested entry or raise an exception when it is undefined.
-
-        :param name:
-            The name to process.
-
-        :return:
-            Returns a value of type ``LoggerContextLevels``.
-        """
+                name: str) -> LoggerContextConfig:
         normalized_name = self._normalize_name(name)
         try:
             return self._entries[normalized_name]
@@ -1025,103 +925,43 @@ class ObjectLoggerContexts:
                   *,
                   level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT,
                   console_level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT,
-                  file_level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT) -> LoggerContextLevels:
-        """
-        Apply the supplied configuration values and notify the owner.
+                  file_level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT,
+                  format: str | LoggerConfigValue = LoggerConfigValue.INHERIT,
+                  console_format: str | LoggerConfigValue = LoggerConfigValue.INHERIT,
+                  file_format: str | LoggerConfigValue = LoggerConfigValue.INHERIT) -> LoggerContextConfig:
+        """Create or replace one context configuration."""
 
-        Examples:
-            config.contexts.configure('broadcast', level=logging.DEBUG)
-                Configures DEBUG logging for the 'broadcast' context.
-
-        :param name:
-            The name to process.
-
-        :param level:
-            The logging level to apply.
-
-        :param console_level:
-            The logging level to apply to console handlers.
-
-        :param file_level:
-            The logging level to apply to file handlers.
-
-        :return:
-            Returns a value of type ``LoggerContextLevels``.
-        """
-        entry = LoggerContextLevels(status=LoggerContextStatus.CONFIGURED,
+        entry = LoggerContextConfig(status=LoggerContextStatus.CONFIGURED,
                                     level=level,
                                     console_level=console_level,
-                                    file_level=file_level)
+                                    file_level=file_level,
+                                    format=format,
+                                    console_format=console_format,
+                                    file_format=file_format)
         self._store(name, entry)
         return entry
 
     def inherit(self,
-                name: str) -> LoggerContextLevels:
-        """
-        Mark the requested configuration entry as inherited.
-
-        Examples:
-            config.contexts.inherit('broadcast')
-                Makes the local context explicitly inherit its parent definition.
-
-        :param name:
-            The name to process.
-
-        :return:
-            Returns a value of type ``LoggerContextLevels``.
-        """
-        entry = LoggerContextLevels(status=LoggerContextStatus.INHERIT)
+                name: str) -> LoggerContextConfig:
+        entry = LoggerContextConfig(status=LoggerContextStatus.INHERIT)
         self._store(name, entry)
         return entry
 
     def disable(self,
-                name: str) -> LoggerContextLevels:
-        """
-        Disable the requested configuration entry explicitly.
-
-        Examples:
-            config.contexts.disable('broadcast')
-                Disables all records emitted inside the 'broadcast' context.
-
-        :param name:
-            The name to process.
-
-        :return:
-            Returns a value of type ``LoggerContextLevels``.
-        """
-        entry = LoggerContextLevels(status=LoggerContextStatus.DISABLED)
+                name: str) -> LoggerContextConfig:
+        entry = LoggerContextConfig(status=LoggerContextStatus.DISABLED)
         self._store(name, entry)
         return entry
 
     def remove(self,
                name: str) -> None:
-        """
-        Remove the requested local configuration entry.
-
-        Examples:
-            config.contexts.remove('broadcast')
-                Removes the local context definition completely.
-
-        :param name:
-            The name to process.
-
-        :return:
-            Returns None.
-        """
         normalized_name = self._normalize_name(name)
         entry = self._entries.pop(normalized_name, None)
-        if entry is None:
-            return
-        entry._unbind()
-        self._notify()
+        if entry is not None:
+            entry._unbind()
+            self._notify()
 
     def clear(self) -> None:
-        """
-        Remove all locally stored configuration entries.
-
-        :return:
-            Returns None.
-        """
         if not self._entries:
             return
         for entry in self._entries.values():
@@ -1129,61 +969,25 @@ class ObjectLoggerContexts:
         self._entries.clear()
         self._notify()
 
-    def items(self) -> tuple[tuple[str, LoggerContextLevels], ...]:
-        """
-        Return an immutable snapshot of the configured entries.
-
-        :return:
-            Returns an immutable tuple containing the requested values.
-        """
+    def items(self) -> tuple[tuple[str, LoggerContextConfig], ...]:
         return tuple(self._entries.items())
 
     def _bind(self,
               on_change: Callable[[], None]) -> None:
-        """
-        Execute the '_bind' operation.
-
-        :param on_change:
-            The callback invoked after a configuration change.
-
-        :return:
-            Returns None.
-        """
         self._on_change = on_change
         for entry in self._entries.values():
             entry._bind(on_change)
 
     def _unbind(self) -> None:
-        """
-        Execute the '_unbind' operation.
-
-        :return:
-            Returns None.
-        """
         self._on_change = None
         for entry in self._entries.values():
             entry._unbind()
 
     def _store(self,
                name: str,
-               entry: LoggerContextLevels,
+               entry: LoggerContextConfig,
                *,
                notify: bool = True) -> None:
-        """
-        Execute the '_store' operation.
-
-        :param name:
-            The name to process.
-
-        :param entry:
-            The 'entry' value used by the operation.
-
-        :param notify:
-            The 'notify' value used by the operation.
-
-        :return:
-            Returns None.
-        """
         normalized_name = self._normalize_name(name)
         old_entry = self._entries.get(normalized_name)
         if old_entry is not None:
@@ -1194,64 +998,36 @@ class ObjectLoggerContexts:
             self._notify()
 
     def _notify(self) -> None:
-        """
-        Execute the '_notify' operation.
-
-        :return:
-            Returns None.
-        """
-        callback = self._on_change
-        if callback is not None:
-            callback()
+        if self._on_change is not None:
+            self._on_change()
 
     @staticmethod
     def _normalize_name(name: str) -> str:
-        """
-        Normalize and validate a registration name, object name, or pattern.
-
-        :param name:
-            The name to process.
-
-        :return:
-            Returns a value of type ``str``.
-        """
         normalized_name = name.strip()
         if not normalized_name:
             raise LoggerConfigurationError("Logging context name cannot be empty.")
         return normalized_name
 
     def _resolve(self,
-                 parent_contexts: Mapping[str, _ResolvedLoggerContextLevels],
+                 parent_contexts: Mapping[str, _ResolvedLoggerContextConfig],
                  *,
                  default_level: int,
                  default_console_level: int,
-                 default_file_level: int) -> dict[str, _ResolvedLoggerContextLevels]:
-        """
-        Execute the '_resolve' operation.
-
-        :param parent_contexts:
-            The 'parent_contexts' value used by the operation.
-
-        :param default_level:
-            The 'default_level' value used by the operation.
-
-        :param default_console_level:
-            The 'default_console_level' value used by the operation.
-
-        :param default_file_level:
-            The 'default_file_level' value used by the operation.
-
-        :return:
-            Returns a value of type ``dict[str, _ResolvedLoggerContextLevels]``.
-        """
+                 default_file_level: int,
+                 default_format: str,
+                 default_console_format: str,
+                 default_file_format: str) -> dict[str, _ResolvedLoggerContextConfig]:
         result = dict(parent_contexts)
         for name, entry in self._entries.items():
             parent = parent_contexts.get(name)
             if entry.status is LoggerContextStatus.DISABLED:
-                result[name] = _ResolvedLoggerContextLevels(disabled=True,
+                result[name] = _ResolvedLoggerContextConfig(disabled=True,
                                                             level=logging.CRITICAL + 1,
                                                             console_level=logging.CRITICAL + 1,
-                                                            file_level=logging.CRITICAL + 1)
+                                                            file_level=logging.CRITICAL + 1,
+                                                            format=default_format,
+                                                            console_format=default_console_format,
+                                                            file_format=default_file_format)
                 continue
             if entry.status is LoggerContextStatus.INHERIT:
                 if parent is None:
@@ -1261,21 +1037,26 @@ class ObjectLoggerContexts:
                 continue
 
             inherited_level = parent.level if parent is not None else default_level
-            inherited_console = parent.console_level if parent is not None else default_console_level
-            inherited_file = parent.file_level if parent is not None else default_file_level
-            level = (inherited_level
-                     if entry.level is LoggerConfigValue.INHERIT
-                     else ObjectLoggerConfig._normalize_level(entry.level))
-            console_level = (level
-                             if entry.console_level is LoggerConfigValue.INHERIT
-                             else ObjectLoggerConfig._normalize_level(entry.console_level))
-            file_level = (level
-                          if entry.file_level is LoggerConfigValue.INHERIT
-                          else ObjectLoggerConfig._normalize_level(entry.file_level))
-            result[name] = _ResolvedLoggerContextLevels(disabled=False,
+            inherited_console_level = parent.console_level if parent is not None else default_console_level
+            inherited_file_level = parent.file_level if parent is not None else default_file_level
+            inherited_format = parent.format if parent is not None else default_format
+            inherited_console_format = parent.console_format if parent is not None else default_console_format
+            inherited_file_format = parent.file_format if parent is not None else default_file_format
+
+            level = inherited_level if entry.level is LoggerConfigValue.INHERIT else ObjectLoggerConfig._normalize_level(entry.level)
+            console_level = level if entry.console_level is LoggerConfigValue.INHERIT and entry.level is not LoggerConfigValue.INHERIT else (inherited_console_level if entry.console_level is LoggerConfigValue.INHERIT else ObjectLoggerConfig._normalize_level(entry.console_level))
+            file_level = level if entry.file_level is LoggerConfigValue.INHERIT and entry.level is not LoggerConfigValue.INHERIT else (inherited_file_level if entry.file_level is LoggerConfigValue.INHERIT else ObjectLoggerConfig._normalize_level(entry.file_level))
+            common_format = inherited_format if entry.format is LoggerConfigValue.INHERIT else entry.format
+            console_format = common_format if entry.console_format is LoggerConfigValue.INHERIT and entry.format is not LoggerConfigValue.INHERIT else (inherited_console_format if entry.console_format is LoggerConfigValue.INHERIT else entry.console_format)
+            file_format = common_format if entry.file_format is LoggerConfigValue.INHERIT and entry.format is not LoggerConfigValue.INHERIT else (inherited_file_format if entry.file_format is LoggerConfigValue.INHERIT else entry.file_format)
+
+            result[name] = _ResolvedLoggerContextConfig(disabled=False,
                                                         level=level,
                                                         console_level=console_level,
-                                                        file_level=file_level)
+                                                        file_level=file_level,
+                                                        format=common_format,
+                                                        console_format=console_format,
+                                                        file_format=file_format)
         return result
 
 
@@ -1290,6 +1071,7 @@ class _ResolvedObjectLoggerConfig:
 
     handler_factories: tuple[Callable[[], logging.Handler], ...]
     formatter: logging.Formatter | None
+    format: str
 
     console: bool
     console_level: int
@@ -1310,7 +1092,7 @@ class _ResolvedObjectLoggerConfig:
     file_delay: bool
     file_archive_backup_count: int
 
-    contexts: Mapping[str, _ResolvedLoggerContextLevels]
+    contexts: Mapping[str, _ResolvedLoggerContextConfig]
 
 
 @dataclass(slots=True)
@@ -1325,6 +1107,7 @@ class ObjectLoggerConfig:
 
     handler_factories: tuple[Callable[[], logging.Handler], ...] | LoggerConfigValue = LoggerConfigValue.INHERIT
     formatter: logging.Formatter | None | LoggerConfigValue = LoggerConfigValue.INHERIT
+    format: str | LoggerConfigValue = LoggerConfigValue.INHERIT
 
     console: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
     console_level: int | str | None | LoggerConfigValue = LoggerConfigValue.INHERIT
@@ -1481,10 +1264,21 @@ class ObjectLoggerConfig:
             file_level_value = base_level
         resolved_file_level = self._normalize_level(file_level_value if file_level_value is not None else base_level)
 
+        common_format = inherited("format")
+        console_format = (common_format
+                          if self.console_format is LoggerConfigValue.INHERIT and self.format is not LoggerConfigValue.INHERIT
+                          else inherited("console_format"))
+        file_format = (common_format
+                       if self.file_format is LoggerConfigValue.INHERIT and self.format is not LoggerConfigValue.INHERIT
+                       else inherited("file_format"))
+
         resolved_contexts = self.contexts._resolve(parent_config.contexts if parent_config is not None else {},
                                                    default_level=base_level,
                                                    default_console_level=resolved_console_level,
-                                                   default_file_level=resolved_file_level)
+                                                   default_file_level=resolved_file_level,
+                                                   default_format=common_format,
+                                                   default_console_format=console_format,
+                                                   default_file_format=file_format)
         technical_levels = [base_level]
         if inherited("console"):
             technical_levels.append(resolved_console_level)
@@ -1504,9 +1298,10 @@ class ObjectLoggerConfig:
                                            disabled=inherited("disabled"),
                                            handler_factories=inherited("handler_factories"),
                                            formatter=inherited("formatter"),
+                                           format=common_format,
                                            console=inherited("console"),
                                            console_level=resolved_console_level,
-                                           console_format=inherited("console_format"),
+                                           console_format=console_format,
                                            console_rich_show_time=inherited("console_rich_show_time"),
                                            console_rich_markup=inherited("console_rich_markup"),
                                            console_rich_show_level=inherited("console_rich_show_level"),
@@ -1515,7 +1310,7 @@ class ObjectLoggerConfig:
                                            file_path=inherited("file_path"),
                                            file_mode=inherited("file_mode"),
                                            file_level=resolved_file_level,
-                                           file_format=inherited("file_format"),
+                                           file_format=file_format,
                                            file_max_bytes=inherited("file_max_bytes"),
                                            file_backup_count=inherited("file_backup_count"),
                                            file_encoding=inherited("file_encoding"),
@@ -1539,6 +1334,7 @@ class ObjectLoggerConfig:
                                            disabled=False,
                                            handler_factories=(),
                                            formatter=None,
+                                           format="%(message)s",
                                            console=False,
                                            console_level=logging.NOTSET,
                                            console_format="[%(object_status)s] [%(log_context)s] %(message)s",
@@ -1635,6 +1431,8 @@ class ObjectLoggerConfig:
             raise LoggerConfigurationError("formatter must be logging.Formatter, None, or INHERIT.")
         if name in {"level", "console_level", "file_level"} and value is not None:
             ObjectLoggerConfig._normalize_level(value)
+        if name in {"format", "console_format", "file_format"} and not isinstance(value, str):
+            raise LoggerConfigurationError(f"{name} must be str or LoggerConfigValue.INHERIT.")
 
 
 class _ContextThresholdFilter(logging.Filter):
@@ -1692,6 +1490,26 @@ class ObjectLogger(logging.Logger):
                     and getattr(self._style, "_fmt", None) == "%(message)s"):
                 return record.getMessage()
             return super().format(record)
+
+    class ContextAwareFormatter(logging.Formatter):
+        """Select and cache a formatter based on the active logging context."""
+
+        def __init__(self,
+                     logger: ObjectLogger,
+                     channel: str):
+            super().__init__()
+            self._logger = logger
+            self._channel = channel
+            self._cache: dict[str, ObjectLogger.Formatter] = {}
+
+        def format(self,
+                   record: logging.LogRecord) -> str:
+            format_string = self._logger._context_format(self._channel)
+            formatter = self._cache.get(format_string)
+            if formatter is None:
+                formatter = ObjectLogger.Formatter(format_string)
+                self._cache[format_string] = formatter
+            return formatter.format(record)
 
     class TarRotatingFileHandler(RotatingFileHandler):
         def __init__(self,
@@ -1798,7 +1616,10 @@ class ObjectLogger(logging.Logger):
         self._default_level = logging.NOTSET
         self._default_console_level = logging.NOTSET
         self._default_file_level = logging.NOTSET
-        self._contexts: dict[str, _ResolvedLoggerContextLevels] = {}
+        self._default_format = "%(message)s"
+        self._default_console_format = "%(message)s"
+        self._default_file_format = "%(message)s"
+        self._contexts: dict[str, _ResolvedLoggerContextConfig] = {}
 
     def _bind_status_provider(self,
                               provider: Callable[[], ObjectStatus | str]) -> None:
@@ -1813,12 +1634,12 @@ class ObjectLogger(logging.Logger):
         """
         self._status_provider = provider
 
-    def _active_context_config(self) -> _ResolvedLoggerContextLevels | None:
+    def _active_context_config(self) -> _ResolvedLoggerContextConfig | None:
         """
         Execute the '_active_context_config' operation.
 
         :return:
-            Returns a value of type ``_ResolvedLoggerContextLevels | None``.
+            Returns a value of type ``_ResolvedLoggerContextConfig | None``.
         """
         stack = _logger_context_stack.get()
         if not stack:
@@ -1856,6 +1677,23 @@ class ObjectLogger(logging.Logger):
         if channel == "file":
             return self._default_file_level
         return self._default_level
+
+    def _context_format(self,
+                        channel: str) -> str:
+        """Return the active format string for one output channel."""
+
+        context = self._active_context_config()
+        if context is not None and not context.disabled:
+            if channel == "console":
+                return context.console_format
+            if channel == "file":
+                return context.file_format
+            return context.format
+        if channel == "console":
+            return self._default_console_format
+        if channel == "file":
+            return self._default_file_format
+        return self._default_format
 
     def isEnabledFor(self,
                      level: int) -> bool:
@@ -1970,6 +1808,9 @@ class ObjectLogger(logging.Logger):
         self._default_level = config.default_level
         self._default_console_level = config.console_level
         self._default_file_level = config.file_level
+        self._default_format = config.format
+        self._default_console_format = config.console_format
+        self._default_file_format = config.file_format
         self._contexts = dict(config.contexts)
         self.setLevel(config.level)
         self.parent = parent_logger
@@ -1985,7 +1826,7 @@ class ObjectLogger(logging.Logger):
             console_handler.set_name(self.name)
             console_handler.setLevel(logging.NOTSET)
             console_handler.addFilter(_ContextThresholdFilter(self, "console"))
-            console_handler.setFormatter(self.Formatter(config.console_format))
+            console_handler.setFormatter(self.ContextAwareFormatter(self, "console"))
             configured_handlers.append(console_handler)
 
         if config.file and not config.disabled:
@@ -2008,7 +1849,7 @@ class ObjectLogger(logging.Logger):
                                                        archive_backup_count=config.file_archive_backup_count)
             file_handler.setLevel(logging.NOTSET)
             file_handler.addFilter(_ContextThresholdFilter(self, "file"))
-            file_handler.setFormatter(self.Formatter(config.file_format))
+            file_handler.setFormatter(self.ContextAwareFormatter(self, "file"))
             configured_handlers.append(file_handler)
 
         for factory in config.handler_factories:
@@ -2306,7 +2147,7 @@ class _ObjectRegistry:
         masked_names = {
             dataclass_field.name
             for dataclass_field in fields(registration.cls)
-            if dataclass_field.metadata.get(_FIELD_MASKED, False)
+            if _field_info(dataclass_field).masked
         }
 
         return tuple(bound_arguments.arguments[name]
@@ -3313,61 +3154,42 @@ class BaseObject(ABC):
         self.logger.debug("Initialized %s.", self)
 
     def __str__(self) -> str:
-        """
-        Return a concise, safe representation for logs and diagnostics.
-
-        Fields created with ``display_field`` or ``display=True`` are appended
-        to the object name. Masked fields expose only whether a value is set.
-
-        :return:
-            Returns the safe object representation.
-        """
+        """Return a concise representation built from display fields."""
 
         parts = [f"name='{self.name}'"]
-
-        for dataclass_field in fields(self):
-            if not dataclass_field.metadata.get(_FIELD_DISPLAY, False):
+        for definition in get_object_fields(self, display=True, internal=False):
+            if definition.name == "name":
                 continue
-            if dataclass_field.metadata.get(_FIELD_INTERNAL, False):
-                continue
-            if dataclass_field.name == "name":
-                continue
-
             try:
-                value = getattr(self, dataclass_field.name)
-            except AttributeError:
+                value = definition.get_value(self)
+            except Exception:
                 continue
-
-            formatted_value = _format_display_value(
-                value,
-                masked=dataclass_field.metadata.get(_FIELD_MASKED, False),
-                empty_values=dataclass_field.metadata.get(_FIELD_EMPTY_VALUES, ()),
-            )
-            parts.append(f"{dataclass_field.name}={formatted_value}")
-
+            parts.append(f"{definition.name}={_format_display_value(value, masked=definition.info.masked, empty_values=definition.info.empty_values)}")
         return f"{type(self).__name__}({', '.join(parts)})"
 
     def _register_masked_fields(self) -> None:
-        """Register all current masked values with the defensive log filter."""
+        """Register sensitive values according to the global protection mode."""
 
-        for dataclass_field in fields(self):
-            if not dataclass_field.metadata.get(_FIELD_MASKED, False):
-                continue
+        if SENSITIVE_VALUE_FILTER_MODE is SensitiveValueFilterMode.DISABLED:
+            return
+        include_computed = SENSITIVE_VALUE_FILTER_MODE is SensitiveValueFilterMode.FIELDS_AND_COMPUTED
+        for definition in get_object_fields(self, masked=True, computed=None if include_computed else False):
             try:
-                value = getattr(self, dataclass_field.name)
-            except AttributeError:
+                value = definition.get_value(self)
+            except Exception:
                 continue
             _sensitive_values.register(value)
 
     def _unregister_masked_fields(self) -> None:
-        """Remove all current masked values from the defensive log filter."""
+        """Remove sensitive values according to the global protection mode."""
 
-        for dataclass_field in fields(self):
-            if not dataclass_field.metadata.get(_FIELD_MASKED, False):
-                continue
+        if SENSITIVE_VALUE_FILTER_MODE is SensitiveValueFilterMode.DISABLED:
+            return
+        include_computed = SENSITIVE_VALUE_FILTER_MODE is SensitiveValueFilterMode.FIELDS_AND_COMPUTED
+        for definition in get_object_fields(self, masked=True, computed=None if include_computed else False):
             try:
-                value = getattr(self, dataclass_field.name)
-            except AttributeError:
+                value = definition.get_value(self)
+            except Exception:
                 continue
             _sensitive_values.unregister(value)
 
@@ -3400,22 +3222,30 @@ class BaseObject(ABC):
 
         dataclass_field = None
         previous_masked_value = MISSING
+        refresh_all_sensitive_values = (
+                initialized
+                and SENSITIVE_VALUE_FILTER_MODE is SensitiveValueFilterMode.FIELDS_AND_COMPUTED
+        )
 
         if initialized:
             dataclass_field = next((dataclass_field
                                     for dataclass_field in fields(self)
                                     if dataclass_field.name == key),
                                    None)
-            if dataclass_field is not None and dataclass_field.metadata.get(_FIELD_FROZEN, False):
+            if dataclass_field is not None and _field_info(dataclass_field).frozen:
                 raise AttributeError(f"Field {dataclass_field.name!r} is frozen and cannot be modified.")
-            if dataclass_field is not None and dataclass_field.metadata.get(_FIELD_MASKED, False):
+            if refresh_all_sensitive_values:
+                self._unregister_masked_fields()
+            elif dataclass_field is not None and _field_info(dataclass_field).masked:
                 previous_masked_value = getattr(self, key, MISSING)
 
         super().__setattr__(key, value)
 
-        if (initialized
-                and dataclass_field is not None
-                and dataclass_field.metadata.get(_FIELD_MASKED, False)):
+        if refresh_all_sensitive_values:
+            self._register_masked_fields()
+        elif (initialized
+              and dataclass_field is not None
+              and _field_info(dataclass_field).masked):
             if previous_masked_value is not MISSING:
                 _sensitive_values.unregister(previous_masked_value)
             _sensitive_values.register(value)
@@ -3861,7 +3691,7 @@ def _validate_framework_field_names(cls: type[BaseObject]) -> None:
     """Validate naming conventions required by framework field categories."""
 
     for dataclass_field in fields(cls):
-        if (dataclass_field.metadata.get(_FIELD_INTERNAL, False)
+        if (_field_info(dataclass_field).internal
                 and not dataclass_field.name.startswith("_")):
             raise TypeError(
                 f"Internal field '{dataclass_field.name}' on "
@@ -4071,25 +3901,32 @@ class WorkerObjectLogger(ObjectLogger):
 @register(name="application",
           kwargs={"logger_config": ObjectLoggerConfig(parent=LoggerParent.NONE,
                                                       level=logging.DEBUG,
-                                                      console=True,
-                                                      console_format=(
+                                                      format=(
                                                               "[%(object_status)s] "
                                                               "[%(log_context)s] "
-                                                              "%(message)s"
+                                                              "%(name)s: %(message)s"
                                                       ),
+                                                      console=True,
                                                       file=True,
                                                       file_path=_EXAMPLE_LOG_DIRECTORY / "application.log",
                                                       file_level=logging.DEBUG,
                                                       contexts=ObjectLoggerContexts({
-                                                          "task.event": LoggerContextLevels(
-                                                              level=logging.INFO
+                                                          "task.event": LoggerContextConfig(
+                                                              level=logging.INFO,
+                                                              console_format="[TASK] %(message)s",
+                                                              file_format=(
+                                                                      "%(asctime)s [TASK] %(name)s: "
+                                                                      "%(message)s | %(log_context_data)s"
+                                                              )
                                                           )
                                                       }))})
 class Application(BaseObject):
     """Root object using the central console and application log file."""
 
     environment: str = display_field(default="development",
-                                     frozen=True)
+                                     frozen=True,
+                                     title="Environment",
+                                     description="Runtime environment of the application.")
 
 
 @register(name="database",
@@ -4102,15 +3939,38 @@ class Application(BaseObject):
 class DatabaseService(BaseObject):
     """Service demonstrating display, masked, read-only, and internal fields."""
 
-    host: str = display_field()
-    port: int = display_field()
-    username: str = display_field()
-    password: str = masked_field()
+    host: str = display_field(title="Database host",
+                              description="Hostname or IP address of the database server.")
+    port: int = display_field(title="Database port",
+                              description="TCP port used for database connections.")
+    username: str = display_field(title="Database user",
+                                  description="User name used to authenticate to the database.")
+    password: str = masked_field(title="Database password",
+                                 description="Secret used to authenticate the database user.")
     optional_token: str | None = masked_field(default=None,
-                                              empty_values=("unset", "disabled"))
+                                              empty_values=("unset", "disabled"),
+                                              title="Optional token",
+                                              description="Optional secondary credential.")
     service_id: str = read_only_field(default="database-primary",
-                                      display=True)
-    _connection_attempts: int = internal_field(default=0)
+                                      display=True,
+                                      title="Service identifier",
+                                      description="Stable identifier assigned during construction.")
+    _connection_attempts: int = internal_field(default=0,
+                                               title="Connection attempts",
+                                               description="Internal connection-attempt counter.")
+
+    @computed_field(display=True,
+                    title="Database endpoint",
+                    description="Computed host and port used for connections.")
+    def endpoint(self) -> str:
+        return f"{self.host}:{self.port}"
+
+    @computed_field(masked=True,
+                    title="Connection credential",
+                    description="Computed credential string used by a connector.",
+                    as_property=False)
+    def connection_credential(self) -> str:
+        return f"{self.username}:{self.password}"
 
     def connect(self) -> None:
         """Log one example operation without exposing the password."""
@@ -4130,18 +3990,28 @@ class DatabaseService(BaseObject):
                                                       file=True,
                                                       file_path=_EXAMPLE_LOG_DIRECTORY / "worker.log",
                                                       contexts=ObjectLoggerContexts({
-                                                          "task.event": LoggerContextLevels(
+                                                          "task.event": LoggerContextConfig(
                                                               level=logging.DEBUG,
                                                               console_level=logging.INFO,
-                                                              file_level=logging.DEBUG
+                                                              file_level=logging.DEBUG,
+                                                              console_format="[WORKER TASK] %(message)s",
+                                                              file_format=(
+                                                                      "%(asctime)s [%(levelname)s] "
+                                                                      "[%(log_context)s] %(name)s: "
+                                                                      "%(message)s | %(log_context_data)s"
+                                                              )
                                                           )
                                                       }))})
 class WorkerService(BaseObject):
     """Service using a dedicated logger class and an additional file handler."""
 
-    queue: str = display_field()
-    access_token: str = masked_field()
-    _processed_tasks: int = internal_field(default=0)
+    queue: str = display_field(title="Queue",
+                               description="Queue consumed by the worker.")
+    access_token: str = masked_field(title="Access token",
+                                     description="Credential used by the worker.")
+    _processed_tasks: int = internal_field(default=0,
+                                           title="Processed tasks",
+                                           description="Internal number of processed tasks.")
 
     def process_task(self,
                      task_name: str) -> None:
@@ -4195,6 +4065,17 @@ if __name__ == "__main__":
     print(application)
     print(database)
     print(worker)
+
+    # Query stored and computed fields through one interface.
+    print(get_object_fields(database, display=True))
+    print(get_object_fields(DatabaseService, masked=True))
+
+    # ``endpoint`` is an automatically created property. The masked computed
+    # field keeps explicit call semantics because ``as_property=False``.
+    print(database.endpoint)
+    # The callable computed field remains available explicitly. Do not print
+    # sensitive computed values unless they are intentionally sanitized.
+    # credential = database.connection_credential()
 
     # Expected output resembles:
     # Application(name='application', environment='development')
