@@ -1,4 +1,0 @@
-src: test.txt.j2
-dest: parent.txt
-var1: qwerty
-var2: 42

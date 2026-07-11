@@ -1,8 +1,0 @@
-[supervisord]
-user=root
-nodaemon=true
-logfile=/dev/null
-logfile_maxbytes=0
-
-[include]
-files = {{ supervisor_settings.config_path }}/*.conf

@@ -1,8 +1,0 @@
-{% if route.type == "static_files" %}Alias {{ route.path }} "{{ route.document_root.absolute() | ensure_path | as_str }}"
-<Directory "{{ route.document_root.absolute() | ensure_path | as_str }}">
-Require all granted
-Options FollowSymLinks
-AllowOverride None
-DirectoryIndex {{ route.directory_index }}
-</Directory>{% endif %}{% if route.type == "reverse_proxy" %}ProxyPass {{ route.path }} {{ route.target_url }}
-ProxyPassReverse {{ route.path }} {{ route.target_url }}{% endif %}

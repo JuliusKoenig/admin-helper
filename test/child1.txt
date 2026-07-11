@@ -1,4 +1,0 @@
-src: test.txt.j2
-dest: child1.txt
-var1: asdfgh
-var2: 69
