@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fnmatch
 import inspect
 import logging
 
@@ -9,7 +8,6 @@ from dataclasses import dataclass, field as dataclass_field, fields as dataclass
 from typing import Any, Optional, TypeVar, cast, overload
 
 from admin_helper.exceptions import (
-    AmbiguousObjectNameError,
     DuplicateObjectNameError,
     DuplicateRegistrationNameError,
     ObjectTreeLoopError,
@@ -29,6 +27,7 @@ from admin_helper.objects.config import (
     RegistryConfigChange,
 )
 from admin_helper.objects.field import _field_info
+from admin_helper.objects.index import _ObjectIndex
 from admin_helper.objects.logger import ObjectLogger, _get_object_logger
 from admin_helper.objects.object import BaseObject
 from admin_helper.objects.runtime import _bind_registry_config
@@ -101,9 +100,7 @@ class _ObjectRegistry:
         self._sensitive_values = _SensitiveValueRegistry()
         self._registrations_by_name: dict[str, _ObjectRegistration] = {}
         self._registrations_by_class: dict[type[BaseObject], _ObjectRegistration] = {}
-        self._instances_by_name: dict[str, BaseObject] = {}
-        self._instances_by_path: dict[str, list[BaseObject]] = {}
-        self._instance_registrations: dict[int, _ObjectRegistration] = {}
+        self._index = _ObjectIndex()
         self._building = False
         self._built = False
 
@@ -259,7 +256,7 @@ class _ObjectRegistry:
             self._built = True
             registry_logger.debug(
                 "Built the object registry successfully with %d instances.",
-                len(self._instances_by_name),
+                len(self._index),
             )
         except Exception:
             # Roll back every object and index created during a failed build.
@@ -336,8 +333,8 @@ class _ObjectRegistry:
         )
         if object_name in registration.instances:
             return registration.instances[object_name]
-        if object_name in self._instances_by_name:
-            existing = self._instances_by_name[object_name]
+        existing = self._index.exact(object_name)
+        if existing is not None:
             raise DuplicateObjectNameError(
                 f"Object name {object_name!r} is already used by {type(existing).__module__}.{type(existing).__qualname__}."
             )
@@ -412,8 +409,7 @@ class _ObjectRegistry:
         # after construction succeeded.
         assert instance is not None
         registration.instances[object_name] = instance
-        self._index_instance(instance)
-        self._instance_registrations[id(instance)] = registration
+        self._index.add(instance, registration)
         self._instantiate_children(
             parent_instance=instance, parent_registration=registration
         )
@@ -687,37 +683,10 @@ class _ObjectRegistry:
             Returns a value of type ``BaseObject | _T``.
         """
 
-        # Prefer an exact full-path lookup because it is always unambiguous.
         normalized_name = self._normalize_name(name)
-        instance = self._instances_by_name.get(normalized_name)
-        if instance is None:
-            # Fall back to the suffix index, optionally narrowing ambiguous
-            # names with the caller-provided expected type.
-            matching_instances = self._instances_by_path.get(normalized_name, [])
-            if expected_type is not None:
-                matching_instances = [
-                    matching_instance
-                    for matching_instance in matching_instances
-                    if isinstance(matching_instance, expected_type)
-                ]
-            if not matching_instances:
-                raise KeyError(f"No instantiated object exists as {normalized_name!r}.")
-            if len(matching_instances) > 1:
-                matching_names = tuple(
-                    matching_instance.name for matching_instance in matching_instances
-                )
-                raise AmbiguousObjectNameError(
-                    f"Object name {normalized_name!r} is ambiguous. "
-                    f"Matching objects: {matching_names!r}."
-                )
-            instance = matching_instances[0]
-
-        if expected_type is not None and not isinstance(instance, expected_type):
-            raise TypeError(
-                f"Object {instance.name!r} contains {type(instance).__name__}, not {expected_type.__name__}."
-            )
-
-        return instance
+        if expected_type is None:
+            return self._index.get_by_name(normalized_name)
+        return self._index.get_by_name(normalized_name, expected_type)
 
     @overload
     def find_by_name(self, pattern: str) -> tuple[BaseObject, ...]:
@@ -778,35 +747,10 @@ class _ObjectRegistry:
             Returns an immutable tuple containing the requested values.
         """
 
-        # Search every indexed suffix so callers may omit leading ancestors.
         normalized_pattern = self._normalize_name(pattern)
-
-        # Build a new immutable snapshot rather than exposing the mutable child
-        # lists owned by registry internals.
-        result: list[BaseObject] = []
-
-        # One instance may match through multiple suffixes; identity-based
-        # de-duplication guarantees that it appears only once in the result.
-        visited: set[int] = set()
-        for object_path, instances in self._instances_by_path.items():
-            if not self._match_object_path(
-                object_name=object_path, pattern=normalized_pattern
-            ):
-                continue
-            for instance in instances:
-                identity = id(instance)
-                if identity in visited:
-                    continue
-                if expected_type is not None and not isinstance(
-                    instance, expected_type
-                ):
-                    continue
-                visited.add(identity)
-                result.append(instance)
-        if expected_type is not None:
-            return cast(tuple[_T, ...], cast(object, tuple(result)))
-
-        return tuple(result)
+        if expected_type is None:
+            return self._index.find_by_name(normalized_pattern)
+        return self._index.find_by_name(normalized_pattern, expected_type)
 
     @overload
     def get_class(self, name: str) -> type[BaseObject]:
@@ -878,11 +822,7 @@ class _ObjectRegistry:
             Returns an immutable tuple containing the requested values.
         """
 
-        return tuple(
-            instance
-            for instance in self._instances_by_name.values()
-            if isinstance(instance, expected_type)
-        )
+        return self._index.get_by_type(expected_type)
 
     def _attach_new_child(self, parent: BaseObject, child: BaseObject) -> None:
         """Attach a newly constructed child before committing registry indexes."""
@@ -949,10 +889,9 @@ class _ObjectRegistry:
 
                 child.logger.debug("Moving %s to %s.", child, parent)
 
-                # Detach only after the target relationship is proven safe.
+                # Compute and validate every future subtree name before changing
+                # the existing tree or lookup indexes.
                 old_parent = child.parent
-                if old_parent is not None and child in old_parent._children:
-                    old_parent._children.remove(child)
                 old_name = child.name
                 new_name = f"{parent.name}.{child.registration_name}"
 
@@ -966,15 +905,19 @@ class _ObjectRegistry:
                 subtree_ids = {id(instance) for instance in subtree}
                 for instance in subtree:
                     instance_name = new_names[id(instance)]
-                    existing = self._instances_by_name.get(instance_name)
+                    existing = self._index.exact(instance_name)
                     if existing is not None and id(existing) not in subtree_ids:
                         raise DuplicateObjectNameError(
                             f"Object name {instance_name!r} already exists."
                         )
 
+                # Detach only after the complete target state is proven safe.
+                if old_parent is not None and child in old_parent._children:
+                    old_parent._children.remove(child)
+
                 # Replace names, parent links, registration indexes, and suffix indexes.
                 for instance in subtree:
-                    self._unindex_instance(
+                    self._index.remove(
                         instance, object_name=old_names[id(instance)]
                     )
                 with child._unlocked():
@@ -984,11 +927,11 @@ class _ObjectRegistry:
                     instance_new_name = new_names[id(instance)]
                     with instance._unlocked():
                         instance.name = instance_new_name
-                    registration = self._instance_registrations.get(id(instance))
+                    registration = self._index.registration_for(instance)
                     if registration is not None:
                         registration.instances.pop(instance_old_name, None)
                         registration.instances[instance_new_name] = instance
-                    self._index_instance(instance)
+                    self._index.add(instance, registration)
                 if child not in parent._children:
                     parent._children.append(child)
 
@@ -1028,7 +971,7 @@ class _ObjectRegistry:
             Returns an immutable tuple containing the requested values.
         """
 
-        return tuple(self._instances_by_name.values())
+        return self._index.instances()
 
     def root_objects(self) -> tuple[BaseObject, ...]:
         """
@@ -1053,7 +996,7 @@ class _ObjectRegistry:
             Returns True when the condition is satisfied; otherwise, returns False.
         """
 
-        return self._normalize_name(name) in self._instances_by_name
+        return self._normalize_name(name) in self._index
 
     def _iter_registrations(self) -> Iterator[_ObjectRegistration]:
         """
@@ -1064,120 +1007,6 @@ class _ObjectRegistry:
         """
 
         return iter(self._registrations_by_name.values())
-
-    def _index_instance(self, instance: BaseObject) -> None:
-        """
-        Add an instance to the exact-name and suffix-path indexes.
-
-        :param instance:
-            The 'instance' value used by the operation.
-
-        :return:
-            Returns None.
-        """
-
-        # The exact-name index provides O(1) full-path lookups.
-        self._instances_by_name[instance.name] = instance
-
-        # The suffix index supports shortened paths and wildcard searches.
-        for object_path in self._get_object_name_paths(instance.name):
-            path_instances = self._instances_by_path.setdefault(object_path, [])
-            if not any(path_instance is instance for path_instance in path_instances):
-                path_instances.append(instance)
-
-    def _unindex_instance(
-        self, instance: BaseObject, object_name: str | None = None
-    ) -> None:
-        """
-        Remove an instance from all indexes for one previously used name.
-
-        :param instance:
-            The 'instance' value used by the operation.
-
-        :param object_name:
-            The 'object_name' value used by the operation.
-
-        :return:
-            Returns None.
-        """
-
-        indexed_name = object_name or instance.name
-        if self._instances_by_name.get(indexed_name) is instance:
-            del self._instances_by_name[indexed_name]
-        for object_path in self._get_object_name_paths(indexed_name):
-            path_instances = self._instances_by_path.get(object_path)
-            if path_instances is None:
-                continue
-            self._instances_by_path[object_path] = [
-                path_instance
-                for path_instance in path_instances
-                if path_instance is not instance
-            ]
-            path_instances = self._instances_by_path[object_path]
-            if not path_instances:
-                del self._instances_by_path[object_path]
-
-    @staticmethod
-    def _get_object_name_paths(object_name: str) -> tuple[str, ...]:
-        """
-        Build every addressable suffix for one hierarchical object name.  For ``app.apache.routes`` the result is ``('app.apache.routes', 'apache.routes', 'routes')``.
-
-        :param object_name:
-            The 'object_name' value used by the operation.
-
-        :return:
-            Returns an immutable tuple containing the requested values.
-        """
-
-        name_parts = object_name.split(".")
-        return tuple(".".join(name_parts[index:]) for index in range(len(name_parts)))
-
-    @staticmethod
-    def _match_object_path(object_name: str, pattern: str) -> bool:
-        """
-        Match one dot-separated object path against a wildcard pattern.  Matching is segment based: ordinary shell wildcards are applied inside one segment, ``*`` therefore cannot cross a dot, and the special segment ``**`` can consume any number of hierarchy levels.
-
-        :param object_name:
-            The 'object_name' value used by the operation.
-
-        :param pattern:
-            The segment-aware wildcard pattern to match.
-
-        :return:
-            Returns True when the condition is satisfied; otherwise, returns False.
-        """
-
-        # Split on hierarchy boundaries so ordinary fnmatch wildcards cannot
-        # accidentally cross from one object name segment into another.
-        object_parts = object_name.split(".")
-        pattern_parts = pattern.split(".")
-
-        def match(object_index: int, pattern_index: int) -> bool:
-            """
-            Recursively compare object-path and pattern segments.
-
-            :param object_index: The hierarchical object index to match.
-            :param pattern_index: The wildcard pattern to match.
-            :return: Whether the pattern matches ``object_index``.
-            """
-
-            if pattern_index == len(pattern_parts):
-                return object_index == len(object_parts)
-            pattern_part = pattern_parts[pattern_index]
-            if pattern_part == "**":
-                if pattern_index == len(pattern_parts) - 1:
-                    return True
-                for next_object_index in range(object_index, len(object_parts) + 1):
-                    if match(next_object_index, pattern_index + 1):
-                        return True
-                return False
-            if object_index >= len(object_parts):
-                return False
-            if not fnmatch.fnmatchcase(object_parts[object_index], pattern_part):
-                return False
-            return match(object_index + 1, pattern_index + 1)
-
-        return match(0, 0)
 
     @classmethod
     def _build_object_name(
@@ -1211,14 +1040,12 @@ class _ObjectRegistry:
 
         # Break tree references first, then clear per-registration instances
         # and all global lookup indexes.
-        for instance in self._instances_by_name.values():
+        for instance in self._index.instances():
             instance._unregister_masked_fields()
             instance._children.clear()
         for registration in self._registrations_by_name.values():
             registration.instances.clear()
-        self._instances_by_name.clear()
-        self._instances_by_path.clear()
-        self._instance_registrations.clear()
+        self._index.clear()
         self._built = False
 
     @staticmethod

@@ -227,3 +227,154 @@ def test_failed_child_construction_leaves_no_tree_or_index_entry() -> None:
     assert registry.get_by_type(BrokenChild) == ()
     assert created_roots[0].children == ()
 
+
+
+def test_runtime_index_rejects_ambiguous_suffix_and_deduplicates_wildcards() -> None:
+    from admin_helper.exceptions import AmbiguousObjectNameError
+    from admin_helper.objects.index import _ObjectIndex
+
+    first = object.__new__(ExampleWorker)
+    second = object.__new__(ExampleWorker)
+    object.__setattr__(first, "name", "first.service.worker")
+    object.__setattr__(second, "name", "second.service.worker")
+
+    index = _ObjectIndex()
+    index.add(first)
+    index.add(second)
+
+    with pytest.raises(AmbiguousObjectNameError, match="ambiguous"):
+        index.get_by_name("worker")
+
+    assert index.find_by_name("*.worker") == (first, second)
+    assert index.find_by_name("**.worker") == (first, second)
+    assert index.find_by_name("first.**") == (first,)
+
+
+def test_reparenting_reindexes_complete_subtree() -> None:
+    from admin_helper.objects.registry import _ObjectRegistry
+
+    registry = _ObjectRegistry()
+
+    @object_dataclass
+    class Root(BaseObject):
+        pass
+
+    @object_dataclass
+    class Target(BaseObject):
+        pass
+
+    @object_dataclass
+    class Child(BaseObject):
+        pass
+
+    @object_dataclass
+    class Grandchild(BaseObject):
+        pass
+
+    registry._register(name="phase5_root", cls=Root, abstract=False)
+    registry._register(name="phase5_target", cls=Target, abstract=False)
+    registry._register(name="phase5_child", cls=Child, abstract=False, parent=Root)
+    registry._register(
+        name="phase5_grandchild", cls=Grandchild, abstract=False, parent=Child
+    )
+    registry.instantiate_all()
+
+    (root,) = registry.get_by_type(Root)
+    (target,) = registry.get_by_type(Target)
+    (child,) = registry.get_by_type(Child)
+    (grandchild,) = registry.get_by_type(Grandchild)
+
+    target.add_child(child)
+
+    assert root.children == ()
+    assert target.children == (child,)
+    assert child.name == "phase5_target.phase5_child"
+    assert grandchild.name == "phase5_target.phase5_child.phase5_grandchild"
+    assert registry.get_by_name("phase5_target.phase5_child") is child
+    assert registry.get_by_name("phase5_child.phase5_grandchild") is grandchild
+    with pytest.raises(KeyError):
+        registry.get_by_name("phase5_root.phase5_child")
+
+
+def test_failed_reparenting_preserves_tree_and_indexes() -> None:
+    from admin_helper.exceptions import DuplicateObjectNameError
+    from admin_helper.objects.registry import _ObjectRegistry
+
+    registry = _ObjectRegistry()
+
+    @object_dataclass
+    class FirstRoot(BaseObject):
+        pass
+
+    @object_dataclass
+    class SecondRoot(BaseObject):
+        pass
+
+    @object_dataclass
+    class Movable(BaseObject):
+        pass
+
+    @object_dataclass
+    class Existing(BaseObject):
+        pass
+
+    registry._register(name="phase5_first", cls=FirstRoot, abstract=False)
+    registry._register(name="phase5_second", cls=SecondRoot, abstract=False)
+    registry._register(name="shared", cls=Movable, abstract=False, parent=FirstRoot)
+    registry._register(name="other", cls=Existing, abstract=False, parent=SecondRoot)
+    registry.instantiate_all()
+
+    (first_root,) = registry.get_by_type(FirstRoot)
+    (second_root,) = registry.get_by_type(SecondRoot)
+    (movable,) = registry.get_by_type(Movable)
+    (existing,) = registry.get_by_type(Existing)
+
+    # Simulate the target-name conflict without bypassing the index component.
+    old_existing_name = existing.name
+    registry._index.remove(existing)
+    with existing._unlocked():
+        existing.name = "phase5_second.shared"
+    registry._index.add(existing, registry._index.registration_for(existing))
+
+    with pytest.raises(DuplicateObjectNameError):
+        second_root.add_child(movable)
+
+    assert movable.parent is first_root
+    assert first_root.children == (movable,)
+    assert second_root.children == (existing,)
+    assert movable.name == "phase5_first.shared"
+    assert registry.get_by_name("phase5_first.shared") is movable
+    assert registry.get_by_name("phase5_second.shared") is existing
+
+    # Restore the synthetic name so cleanup and diagnostics remain coherent.
+    registry._index.remove(existing)
+    with existing._unlocked():
+        existing.name = old_existing_name
+    registry._index.add(existing, registry._index.registration_for(existing))
+
+
+def test_registry_instances_have_isolated_runtime_indexes() -> None:
+    from admin_helper.objects.registry import _ObjectRegistry
+
+    first_registry = _ObjectRegistry()
+    second_registry = _ObjectRegistry()
+
+    @object_dataclass
+    class FirstObject(BaseObject):
+        pass
+
+    @object_dataclass
+    class SecondObject(BaseObject):
+        pass
+
+    first_registry._register(name="same_name", cls=FirstObject, abstract=False)
+    second_registry._register(name="same_name", cls=SecondObject, abstract=False)
+    first_registry.instantiate_all()
+    second_registry.instantiate_all()
+
+    first = first_registry.get_by_name("same_name", FirstObject)
+    second = second_registry.get_by_name("same_name", SecondObject)
+
+    assert first is not second
+    assert first_registry.instances() == (first,)
+    assert second_registry.instances() == (second,)

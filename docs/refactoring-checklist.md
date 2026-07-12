@@ -8,7 +8,7 @@
 
 ## ~~4. Decouple `BaseObject` construction from the registry~~
 
-## 5. Extract registry runtime indexes
+## ~~5. Extract registry runtime indexes~~
 
 ## 6. Split logger configuration
 
