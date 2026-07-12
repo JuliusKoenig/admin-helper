@@ -1,5 +1,11 @@
 import warnings
-from dataclasses import dataclass, field as dataclass_field, fields as dataclass_fields, Field, MISSING
+from dataclasses import (
+    dataclass,
+    field as dataclass_field,
+    fields as dataclass_fields,
+    Field,
+    MISSING,
+)
 from enum import Enum
 from typing import Iterable, Any, Callable, Mapping, get_type_hints
 
@@ -82,8 +88,7 @@ class ObjectFieldDefinition:
     dataclass_field: Field[Any] | None = None
     descriptor: property | Callable[..., Any] | None = None
 
-    def get_value(self,
-                  obj: Any) -> Any:
+    def get_value(self, obj: Any) -> Any:
         """
         Read the field value from an object instance.
 
@@ -103,21 +108,23 @@ class ObjectFieldDefinition:
 _UNSET = object()
 
 
-def field(default: Any = MISSING,
-          default_factory: Any = MISSING,
-          init: bool | object = _UNSET,
-          repr: bool | object = _UNSET,
-          compare: bool | object = _UNSET,
-          hash: bool | None = None,
-          kw_only: bool | Any = MISSING,
-          read_only: bool = False,
-          internal: bool = False,
-          masked: bool = False,
-          display: bool = False,
-          title: str | None = None,
-          description: str | None = None,
-          empty_values: Iterable[Any] = (),
-          metadata: Mapping[str, Any] | None = None) -> Field[Any]:
+def field(
+    default: Any = MISSING,
+    default_factory: Any = MISSING,
+    init: bool | object = _UNSET,
+    repr: bool | object = _UNSET,
+    compare: bool | object = _UNSET,
+    hash: bool | None = None,
+    kw_only: bool | Any = MISSING,
+    read_only: bool = False,
+    internal: bool = False,
+    masked: bool = False,
+    display: bool = False,
+    title: str | None = None,
+    description: str | None = None,
+    empty_values: Iterable[Any] = (),
+    metadata: Mapping[str, Any] | None = None,
+) -> Field[Any]:
     """
     Define a framework-aware dataclass field.
 
@@ -193,21 +200,29 @@ def field(default: Any = MISSING,
 
     if internal:
         if init is not _UNSET and resolved_init:
-            warnings.warn("Internal fields cannot be constructor parameters; init=True was ignored.",
-                          FieldConfigurationWarning,
-                          stacklevel=3)
+            warnings.warn(
+                "Internal fields cannot be constructor parameters; init=True was ignored.",
+                FieldConfigurationWarning,
+                stacklevel=3,
+            )
         if repr is not _UNSET and resolved_repr:
-            warnings.warn("Internal fields cannot appear in repr; repr=True was ignored.",
-                          FieldConfigurationWarning,
-                          stacklevel=3)
+            warnings.warn(
+                "Internal fields cannot appear in repr; repr=True was ignored.",
+                FieldConfigurationWarning,
+                stacklevel=3,
+            )
         if compare is not _UNSET and resolved_compare:
-            warnings.warn("Internal fields do not participate in comparisons; compare=True was ignored.",
-                          FieldConfigurationWarning,
-                          stacklevel=3)
+            warnings.warn(
+                "Internal fields do not participate in comparisons; compare=True was ignored.",
+                FieldConfigurationWarning,
+                stacklevel=3,
+            )
         if display:
-            warnings.warn("Internal fields cannot be display fields; display=True was ignored.",
-                          FieldConfigurationWarning,
-                          stacklevel=3)
+            warnings.warn(
+                "Internal fields cannot be display fields; display=True was ignored.",
+                FieldConfigurationWarning,
+                stacklevel=3,
+            )
         resolved_init = False
         resolved_repr = False
         resolved_compare = False
@@ -215,42 +230,52 @@ def field(default: Any = MISSING,
 
     if masked and resolved_repr:
         if repr is not _UNSET:
-            warnings.warn("Masked fields cannot appear in the dataclass repr; repr=True was ignored.",
-                          FieldConfigurationWarning,
-                          stacklevel=3)
+            warnings.warn(
+                "Masked fields cannot appear in the dataclass repr; repr=True was ignored.",
+                FieldConfigurationWarning,
+                stacklevel=3,
+            )
         resolved_repr = False
 
-    info = FieldInfo(title=title,
-                     description=description,
-                     read_only=read_only,
-                     internal=internal,
-                     masked=masked,
-                     display=display,
-                     empty_values=empty_values)
+    info = FieldInfo(
+        title=title,
+        description=description,
+        read_only=read_only,
+        internal=internal,
+        masked=masked,
+        display=display,
+        empty_values=empty_values,
+    )
     field_metadata = dict(metadata or {})
     if FIELD_INFO_METADATA_KEY in field_metadata:
-        raise ValueError(f"metadata key {FIELD_INFO_METADATA_KEY!r} is reserved by the framework.")
+        raise ValueError(
+            f"metadata key {FIELD_INFO_METADATA_KEY!r} is reserved by the framework."
+        )
     field_metadata[FIELD_INFO_METADATA_KEY] = info
 
-    return dataclass_field(default=default,
-                           default_factory=default_factory,
-                           init=resolved_init,
-                           repr=resolved_repr,
-                           hash=hash,
-                           compare=resolved_compare,
-                           metadata=field_metadata,
-                           kw_only=kw_only)
+    return dataclass_field(
+        default=default,
+        default_factory=default_factory,
+        init=resolved_init,
+        repr=resolved_repr,
+        hash=hash,
+        compare=resolved_compare,
+        metadata=field_metadata,
+        kw_only=kw_only,
+    )
 
 
-def computed_field(*,
-                   title: str | None = None,
-                   description: str | None = None,
-                   read_only: bool = True,
-                   internal: bool = False,
-                   masked: bool = False,
-                   display: bool = False,
-                   empty_values: Iterable[Any] = (),
-                   as_property: bool = True) -> Callable[[Callable[..., Any]], property | Callable[..., Any]]:
+def computed_field(
+    *,
+    title: str | None = None,
+    description: str | None = None,
+    read_only: bool = True,
+    internal: bool = False,
+    masked: bool = False,
+    display: bool = False,
+    empty_values: Iterable[Any] = (),
+    as_property: bool = True,
+) -> Callable[[Callable[..., Any]], property | Callable[..., Any]]:
     """
     Mark a method as a computed object field.
 
@@ -292,19 +317,23 @@ def computed_field(*,
     """
 
     if internal and display:
-        warnings.warn("Internal computed fields cannot be display fields; display=True was ignored.",
-                      FieldConfigurationWarning,
-                      stacklevel=3)
+        warnings.warn(
+            "Internal computed fields cannot be display fields; display=True was ignored.",
+            FieldConfigurationWarning,
+            stacklevel=3,
+        )
         display = False
 
-    info = ComputedFieldInfo(title=title,
-                             description=description,
-                             read_only=read_only,
-                             internal=internal,
-                             masked=masked,
-                             display=display,
-                             empty_values=empty_values,
-                             as_property=as_property)
+    info = ComputedFieldInfo(
+        title=title,
+        description=description,
+        read_only=read_only,
+        internal=internal,
+        masked=masked,
+        display=display,
+        empty_values=empty_values,
+        as_property=as_property,
+    )
 
     def decorator(func: Callable[..., Any]) -> property | Callable[..., Any]:
         setattr(func, "__object_computed_field_info__", info)
@@ -318,14 +347,16 @@ def _field_info(dataclass_field: Field[Any]) -> FieldInfo:
     return value if isinstance(value, FieldInfo) else FieldInfo()
 
 
-def fields(obj_or_cls: Any,
-           *,
-           name: str | None = None,
-           display: bool | None = None,
-           masked: bool | None = None,
-           internal: bool | None = None,
-           read_only: bool | None = None,
-           computed: bool | None = None) -> tuple[ObjectFieldDefinition, ...]:
+def fields(
+    obj_or_cls: Any,
+    *,
+    name: str | None = None,
+    display: bool | None = None,
+    masked: bool | None = None,
+    internal: bool | None = None,
+    read_only: bool | None = None,
+    computed: bool | None = None,
+) -> tuple[ObjectFieldDefinition, ...]:
     """
     Query stored and computed fields through one stable interface.
 
@@ -374,12 +405,16 @@ def fields(obj_or_cls: Any,
     if computed is not True:
         for item in dataclass_fields(cls):
             info = _field_info(item)
-            result.append(ObjectFieldDefinition(name=item.name,
-                                                owner=cls,
-                                                annotation=annotations.get(item.name, Any),
-                                                info=info,
-                                                source=ObjectFieldSource.DATACLASS,
-                                                dataclass_field=item))
+            result.append(
+                ObjectFieldDefinition(
+                    name=item.name,
+                    owner=cls,
+                    annotation=annotations.get(item.name, Any),
+                    info=info,
+                    source=ObjectFieldSource.DATACLASS,
+                    dataclass_field=item,
+                )
+            )
 
     if computed is not False:
         seen: set[str] = set()
@@ -387,17 +422,25 @@ def fields(obj_or_cls: Any,
             for item_name, descriptor in vars(owner).items():
                 if item_name in seen:
                     continue
-                func = descriptor.fget if isinstance(descriptor, property) else descriptor
+                func = (
+                    descriptor.fget if isinstance(descriptor, property) else descriptor
+                )
                 info = getattr(func, "__object_computed_field_info__", None)
                 if not isinstance(info, ComputedFieldInfo):
                     continue
                 seen.add(item_name)
-                result.append(ObjectFieldDefinition(name=item_name,
-                                                    owner=owner,
-                                                    annotation=getattr(func, "__annotations__", {}).get("return", Any),
-                                                    info=info,
-                                                    source=ObjectFieldSource.COMPUTED,
-                                                    descriptor=descriptor))
+                result.append(
+                    ObjectFieldDefinition(
+                        name=item_name,
+                        owner=owner,
+                        annotation=getattr(func, "__annotations__", {}).get(
+                            "return", Any
+                        ),
+                        info=info,
+                        source=ObjectFieldSource.COMPUTED,
+                        descriptor=descriptor,
+                    )
+                )
 
     def matches(_item: ObjectFieldDefinition) -> bool:
         if name is not None and _item.name != name:

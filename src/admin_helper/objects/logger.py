@@ -9,7 +9,13 @@ from typing import Callable, Any, Iterator, Mapping, Union, Optional
 
 from rich.logging import RichHandler
 
-from admin_helper.objects.config import _ResolvedObjectLoggerConfig, ObjectStatus, _ResolvedLoggerContextConfig, _logger_context_stack, _LoggerContextFrame
+from admin_helper.objects.config import (
+    _ResolvedObjectLoggerConfig,
+    ObjectStatus,
+    _ResolvedLoggerContextConfig,
+    _logger_context_stack,
+    _LoggerContextFrame,
+)
 from admin_helper.console import AdminHelperConsole
 from admin_helper.exceptions import LoggerConfigurationError
 from admin_helper.objects.helper import _format_log_value, _masking_framework_config
@@ -20,9 +26,7 @@ from admin_helper.warnings import SensitiveValueWarning
 class ContextThresholdFilter(logging.Filter):
     """Apply the active context threshold to one concrete output channel."""
 
-    def __init__(self,
-                 logger: "ObjectLogger",
-                 channel: str):
+    def __init__(self, logger: "ObjectLogger", channel: str):
         """
         Initialize the instance and its private runtime state.
 
@@ -39,8 +43,7 @@ class ContextThresholdFilter(logging.Filter):
         self._logger = logger
         self._channel = channel
 
-    def filter(self,
-               record: logging.LogRecord) -> bool:
+    def filter(self, record: logging.LogRecord) -> bool:
         """
         Return whether the current record passes the configured filter.
 
@@ -52,40 +55,52 @@ class ContextThresholdFilter(logging.Filter):
         """
         return record.levelno >= self._logger._context_threshold(self._channel)
 
+
 class MaskedValueFilter(logging.Filter):
     """Redact cached sensitive values before a managed handler formats them."""
 
-    def __init__(self, logger: Optional["ObjectLogger"] = None, channel: str = "custom") -> None:
+    def __init__(
+        self, logger: Optional["ObjectLogger"] = None, channel: str = "custom"
+    ) -> None:
         super().__init__()
         self._logger = logger
         self._channel = channel
 
-    def filter(self,
-               record: logging.LogRecord) -> bool:
+    def filter(self, record: logging.LogRecord) -> bool:
         global_config = _masking_framework_config()
-        channel_enabled = {"console": global_config.console,
-                           "file": global_config.file,
-                           "custom": global_config.custom_handlers}.get(self._channel, global_config.enabled)
+        channel_enabled = {
+            "console": global_config.console,
+            "file": global_config.file,
+            "custom": global_config.custom_handlers,
+        }.get(self._channel, global_config.enabled)
         if not global_config.enabled or not channel_enabled:
             return True
-        if self._logger is not None and not self._logger._masking_enabled(self._channel):
+        if self._logger is not None and not self._logger._masking_enabled(
+            self._channel
+        ):
             if global_config.enforced:
-                warnings.warn("A local logger configuration attempted to disable enforced sensitive-value masking.",
-                              SensitiveValueWarning,
-                              stacklevel=2)
+                warnings.warn(
+                    "A local logger configuration attempted to disable enforced sensitive-value masking.",
+                    SensitiveValueWarning,
+                    stacklevel=2,
+                )
             else:
                 return True
         record.msg = _sensitive_value_registry().sanitize(record.msg)
         record.args = _sensitive_value_registry().sanitize(record.args)
         if hasattr(record, "log_context_data"):
-            record.log_context_data = _sensitive_value_registry().sanitize(record.log_context_data)
+            record.log_context_data = _sensitive_value_registry().sanitize(
+                record.log_context_data
+            )
         if hasattr(record, "log_context_values"):
-            record.log_context_values = _sensitive_value_registry().sanitize(record.log_context_values)
+            record.log_context_values = _sensitive_value_registry().sanitize(
+                record.log_context_values
+            )
         return True
 
+
 class Formatter(logging.Formatter):
-    def format(self,
-               record: logging.LogRecord) -> str:
+    def format(self, record: logging.LogRecord) -> str:
         """
         Execute the 'format' operation.
 
@@ -95,24 +110,24 @@ class Formatter(logging.Formatter):
         :return:
             Returns a value of type ``str``.
         """
-        if (hasattr(record, "markup")
-                and getattr(self._style, "_fmt", None) == "%(message)s"):
+        if (
+            hasattr(record, "markup")
+            and getattr(self._style, "_fmt", None) == "%(message)s"
+        ):
             return record.getMessage()
         return super().format(record)
+
 
 class ContextAwareFormatter(logging.Formatter):
     """Select and cache a formatter based on the active logging context."""
 
-    def __init__(self,
-                 logger: "ObjectLogger",
-                 channel: str):
+    def __init__(self, logger: "ObjectLogger", channel: str):
         super().__init__()
         self._logger = logger
         self._channel = channel
         self._cache: dict[str, Formatter] = {}
 
-    def format(self,
-               record: logging.LogRecord) -> str:
+    def format(self, record: logging.LogRecord) -> str:
         format_string = self._logger._context_format(self._channel)
         formatter = self._cache.get(format_string)
         if formatter is None:
@@ -125,15 +140,17 @@ class ObjectLogger(logging.Logger):
     """Logger implementation used by every ``BaseObject``."""
 
     class TarRotatingFileHandler(RotatingFileHandler):
-        def __init__(self,
-                     name: str,
-                     filename: str | Path,
-                     mode: str = "a",
-                     max_bytes: int = 0,
-                     backup_count: int = 0,
-                     encoding: str | None = None,
-                     delay: bool = False,
-                     archive_backup_count: int = 0):
+        def __init__(
+            self,
+            name: str,
+            filename: str | Path,
+            mode: str = "a",
+            max_bytes: int = 0,
+            backup_count: int = 0,
+            encoding: str | None = None,
+            delay: bool = False,
+            archive_backup_count: int = 0,
+        ):
             """
             Initialize the instance and its private runtime state.
 
@@ -164,15 +181,21 @@ class ObjectLogger(logging.Logger):
             :return:
                 Returns the result of the operation.
             """
-            super().__init__(filename=filename,
-                             mode=mode,
-                             maxBytes=max_bytes,
-                             backupCount=backup_count,
-                             encoding=encoding,
-                             delay=delay)
+            super().__init__(
+                filename=filename,
+                mode=mode,
+                maxBytes=max_bytes,
+                backupCount=backup_count,
+                encoding=encoding,
+                delay=delay,
+            )
             self.set_name(name)
             self.archive_backup_count = archive_backup_count
-            self.archive_base_filename = self.baseFilename[:self.baseFilename.rfind(".")] if "." in self.baseFilename else self.baseFilename
+            self.archive_base_filename = (
+                self.baseFilename[: self.baseFilename.rfind(".")]
+                if "." in self.baseFilename
+                else self.baseFilename
+            )
 
         def doRollover(self) -> None:
             """
@@ -185,8 +208,10 @@ class ObjectLogger(logging.Logger):
             if self.backupCount <= 0 or self.archive_backup_count <= 0:
                 return
             backup_log_pattern = self.baseFilename + ".%d"
-            backup_logs = [Path(backup_log_pattern % index)
-                           for index in range(1, self.backupCount + 1)]
+            backup_logs = [
+                Path(backup_log_pattern % index)
+                for index in range(1, self.backupCount + 1)
+            ]
             backup_logs = [log for log in backup_logs if log.exists()]
             if len(backup_logs) < self.backupCount:
                 return
@@ -207,9 +232,7 @@ class ObjectLogger(logging.Logger):
                     archive.add(log, arcname=log.name)
                     os.remove(log)
 
-    def __init__(self,
-                 name: str,
-                 level: int = logging.NOTSET):
+    def __init__(self, name: str, level: int = logging.NOTSET):
         """
         Initialize the instance and its private runtime state.
 
@@ -222,8 +245,7 @@ class ObjectLogger(logging.Logger):
         :return:
             Returns the result of the operation.
         """
-        super().__init__(name=name,
-                         level=level)
+        super().__init__(name=name, level=level)
         self._managed_handlers: list[logging.Handler] = []
         self._resolved_config: _ResolvedObjectLoggerConfig | None = None
         self._status_provider: Callable[[], ObjectStatus | str] | None = None
@@ -235,8 +257,9 @@ class ObjectLogger(logging.Logger):
         self._default_file_format = "%(message)s"
         self._contexts: dict[str, _ResolvedLoggerContextConfig] = {}
 
-    def _bind_status_provider(self,
-                              provider: Callable[[], Union["ObjectStatus", str]]) -> None:
+    def _bind_status_provider(
+        self, provider: Callable[[], Union["ObjectStatus", str]]
+    ) -> None:
         """
         Execute the '_bind_status_provider' operation.
 
@@ -259,15 +282,16 @@ class ObjectLogger(logging.Logger):
         if not stack:
             return None
         context_name = ".".join(frame.name for frame in stack)
-        matches = [(name, config)
-                   for name, config in self._contexts.items()
-                   if context_name == name or context_name.startswith(f"{name}.")]
+        matches = [
+            (name, config)
+            for name, config in self._contexts.items()
+            if context_name == name or context_name.startswith(f"{name}.")
+        ]
         if not matches:
             return None
         return max(matches, key=lambda item: len(item[0]))[1]
 
-    def _context_threshold(self,
-                           channel: str) -> int:
+    def _context_threshold(self, channel: str) -> int:
         """
         Execute the '_context_threshold' operation.
 
@@ -292,8 +316,7 @@ class ObjectLogger(logging.Logger):
             return self._default_file_level
         return self._default_level
 
-    def _context_format(self,
-                        channel: str) -> str:
+    def _context_format(self, channel: str) -> str:
         """Return the active format string for one output channel."""
 
         context = self._active_context_config()
@@ -309,8 +332,7 @@ class ObjectLogger(logging.Logger):
             return self._default_file_format
         return self._default_format
 
-    def isEnabledFor(self,
-                     level: int) -> bool:
+    def isEnabledFor(self, level: int) -> bool:
         """
         Return whether a record at the supplied level can be emitted.
 
@@ -327,9 +349,7 @@ class ObjectLogger(logging.Logger):
         return level >= self._context_threshold("logger")
 
     @contextmanager
-    def context(self,
-                name: str,
-                **values: Any) -> Iterator["ObjectLogger"]:
+    def context(self, name: str, **values: Any) -> Iterator["ObjectLogger"]:
         """
         Add a dynamic context without defining logging policy in business code.
 
@@ -350,8 +370,7 @@ class ObjectLogger(logging.Logger):
         normalized_name = name.strip()
         if not normalized_name:
             raise LoggerConfigurationError("Logging context name cannot be empty.")
-        frame = _LoggerContextFrame(name=normalized_name,
-                                    values=dict(values))
+        frame = _LoggerContextFrame(name=normalized_name, values=dict(values))
         stack = _logger_context_stack.get()
         token = _logger_context_stack.set((*stack, frame))
         try:
@@ -359,9 +378,7 @@ class ObjectLogger(logging.Logger):
         finally:
             _logger_context_stack.reset(token)
 
-    def makeRecord(self,
-                   *args: Any,
-                   **kwargs: Any) -> logging.LogRecord:
+    def makeRecord(self, *args: Any, **kwargs: Any) -> logging.LogRecord:
         """
         Create a log record and attach object status and context metadata.
 
@@ -382,12 +399,19 @@ class ObjectLogger(logging.Logger):
         status: ObjectStatus | str = ObjectStatus.READY
         if self._status_provider is not None:
             status = self._status_provider()
-        record.object_status = status.value if isinstance(status, ObjectStatus) else str(status)
+        record.object_status = (
+            status.value if isinstance(status, ObjectStatus) else str(status)
+        )
         record.log_context = ".".join(frame.name for frame in stack) if stack else "-"
         record.log_context_depth = len(stack)
         record.log_context_values = context_values
-        record.log_context_data = ", ".join(f"{key}: {_format_log_value(value)}"
-                                            for key, value in context_values.items()) or "-"
+        record.log_context_data = (
+            ", ".join(
+                f"{key}: {_format_log_value(value)}"
+                for key, value in context_values.items()
+            )
+            or "-"
+        )
         return record
 
     def _masking_enabled(self, channel: str) -> bool:
@@ -409,11 +433,13 @@ class ObjectLogger(logging.Logger):
             return config.file_masking
         return config.custom_handler_masking
 
-    def configure(self,
-                  config: "_ResolvedObjectLoggerConfig",
-                  parent_logger: logging.Logger | None,
-                  *,
-                  path_values: Mapping[str, str]) -> None:
+    def configure(
+        self,
+        config: "_ResolvedObjectLoggerConfig",
+        parent_logger: logging.Logger | None,
+        *,
+        path_values: Mapping[str, str],
+    ) -> None:
         """
         Apply the supplied configuration values and notify the owner.
 
@@ -451,11 +477,13 @@ class ObjectLogger(logging.Logger):
 
         configured_handlers: list[logging.Handler] = []
         if config.console and not config.disabled:
-            console_handler = RichHandler(console=AdminHelperConsole,
-                                          show_time=config.console_rich_show_time,
-                                          markup=config.console_rich_markup,
-                                          show_level=config.console_rich_show_level,
-                                          show_path=config.console_rich_show_path)
+            console_handler = RichHandler(
+                console=AdminHelperConsole,
+                show_time=config.console_rich_show_time,
+                markup=config.console_rich_markup,
+                show_level=config.console_rich_show_level,
+                show_path=config.console_rich_show_path,
+            )
             console_handler.set_name(self.name)
             console_handler.setLevel(logging.NOTSET)
             console_handler.addFilter(ContextThresholdFilter(self, "console"))
@@ -467,19 +495,23 @@ class ObjectLogger(logging.Logger):
                 rendered_path = str(config.file_path).format_map(path_values)
             except KeyError as error:
                 raise LoggerConfigurationError(
-                    f"Unknown file_path placeholder '{error.args[0]}' for logger '{self.name}'.") from error
+                    f"Unknown file_path placeholder '{error.args[0]}' for logger '{self.name}'."
+                ) from error
             file_path = Path(rendered_path)
             if not file_path.parent.exists():
                 raise FileNotFoundError(
-                    f"Log file parent directory does not exist: '{file_path.parent}'!")
-            file_handler = self.TarRotatingFileHandler(name=self.name,
-                                                       filename=file_path,
-                                                       mode=config.file_mode,
-                                                       max_bytes=config.file_max_bytes,
-                                                       backup_count=config.file_backup_count,
-                                                       encoding=config.file_encoding,
-                                                       delay=config.file_delay,
-                                                       archive_backup_count=config.file_archive_backup_count)
+                    f"Log file parent directory does not exist: '{file_path.parent}'!"
+                )
+            file_handler = self.TarRotatingFileHandler(
+                name=self.name,
+                filename=file_path,
+                mode=config.file_mode,
+                max_bytes=config.file_max_bytes,
+                backup_count=config.file_backup_count,
+                encoding=config.file_encoding,
+                delay=config.file_delay,
+                archive_backup_count=config.file_archive_backup_count,
+            )
             file_handler.setLevel(logging.NOTSET)
             file_handler.addFilter(ContextThresholdFilter(self, "file"))
             file_handler.setFormatter(ContextAwareFormatter(self, "file"))
@@ -489,23 +521,26 @@ class ObjectLogger(logging.Logger):
             handler = factory()
             if not isinstance(handler, logging.Handler):
                 raise LoggerConfigurationError(
-                    "Every handler factory must return a logging.Handler instance.")
+                    "Every handler factory must return a logging.Handler instance."
+                )
             handler.addFilter(ContextThresholdFilter(self, "logger"))
             if config.formatter is not None:
                 handler.setFormatter(config.formatter)
             configured_handlers.append(handler)
 
         for handler in configured_handlers:
-            if not any(isinstance(filter_, MaskedValueFilter)
-                       for filter_ in handler.filters):
+            if not any(
+                isinstance(filter_, MaskedValueFilter) for filter_ in handler.filters
+            ):
                 handler.addFilter(MaskedValueFilter(self, "custom"))
             self.addHandler(handler)
             self._managed_handlers.append(handler)
         self._resolved_config = config
 
 
-def _get_object_logger(name: str,
-                       logger_class: type[ObjectLogger] = ObjectLogger) -> ObjectLogger:
+def _get_object_logger(
+    name: str, logger_class: type[ObjectLogger] = ObjectLogger
+) -> ObjectLogger:
     """
     Return or create the requested ``ObjectLogger`` subclass.
 
@@ -520,7 +555,9 @@ def _get_object_logger(name: str,
     """
 
     if not isinstance(logger_class, type) or not issubclass(logger_class, ObjectLogger):
-        raise LoggerConfigurationError(f"logger_class must inherit from {ObjectLogger.__name__}, got {logger_class!r}.")
+        raise LoggerConfigurationError(
+            f"logger_class must inherit from {ObjectLogger.__name__}, got {logger_class!r}."
+        )
 
     existing = logging.Logger.manager.loggerDict.get(name)
     if isinstance(existing, logger_class):
@@ -529,12 +566,16 @@ def _get_object_logger(name: str,
         try:
             replacement = logger_class(name)
         except Exception as error:
-            raise LoggerConfigurationError(f"Could not replace logger {name!r} with {logger_class.__name__}: {error}") from error
+            raise LoggerConfigurationError(
+                f"Could not replace logger {name!r} with {logger_class.__name__}: {error}"
+            ) from error
         replacement.manager = logging.Logger.manager
         logging.Logger.manager.loggerDict[name] = replacement
         return replacement
     if isinstance(existing, logging.Logger):
-        raise LoggerConfigurationError(f"Logger {name!r} already exists as {type(existing).__name__}, not {logger_class.__name__}.")
+        raise LoggerConfigurationError(
+            f"Logger {name!r} already exists as {type(existing).__name__}, not {logger_class.__name__}."
+        )
 
     previous_logger_class = logging.getLoggerClass()
     logging.setLoggerClass(logger_class)
@@ -544,10 +585,7 @@ def _get_object_logger(name: str,
         logging.setLoggerClass(previous_logger_class)
 
     if not isinstance(logger, logger_class):
-        raise LoggerConfigurationError(f"Could not create {logger_class.__name__} {name!r}.")
+        raise LoggerConfigurationError(
+            f"Could not create {logger_class.__name__} {name!r}."
+        )
     return logger
-
-
-
-
-

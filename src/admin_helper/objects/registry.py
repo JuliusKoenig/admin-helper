@@ -9,14 +9,22 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field as dataclass_field, fields as dataclass_fields
 from typing import Any, cast, overload, TypeVar, TYPE_CHECKING, Optional
 
-from admin_helper.exceptions import (AmbiguousObjectNameError,
-                                     DuplicateObjectNameError,
-                                     DuplicateRegistrationNameError,
-                                     ObjectTreeLoopError,
-                                     ParentResolutionError,
-                                     RegistryError,
-                                     UnregisteredSubclassError)
-from admin_helper.objects.config import ObjectRegistryConfig, RegistryConfigChange, LoggerParent, ObjectLoggerConfig, ObjectStatus
+from admin_helper.exceptions import (
+    AmbiguousObjectNameError,
+    DuplicateObjectNameError,
+    DuplicateRegistrationNameError,
+    ObjectTreeLoopError,
+    ParentResolutionError,
+    RegistryError,
+    UnregisteredSubclassError,
+)
+from admin_helper.objects.config import (
+    ObjectRegistryConfig,
+    RegistryConfigChange,
+    LoggerParent,
+    ObjectLoggerConfig,
+    ObjectStatus,
+)
 from admin_helper.objects.field import _field_info
 from admin_helper.objects.logger import _get_object_logger, ObjectLogger
 from admin_helper.objects.helper import _bind_registry_config
@@ -80,12 +88,15 @@ class _ConstructionContext:
 
 # The context variable prevents constructor metadata from becoming public
 # dataclass parameters and remains safe across threads and asynchronous tasks.
-_construction_context: ContextVar[_ConstructionContext | None] = ContextVar("base_object_construction_context", default=None)
+_construction_context: ContextVar[_ConstructionContext | None] = ContextVar(
+    "base_object_construction_context", default=None
+)
 
 
 # ---------------------------------------------------------------------------
 # Private registry implementation
 # ---------------------------------------------------------------------------
+
 
 class _ObjectRegistry:
     """
@@ -113,8 +124,13 @@ class _ObjectRegistry:
     def _apply_config_change(self, change: RegistryConfigChange) -> None:
         """Apply one framework configuration side effect."""
 
-        if change in {RegistryConfigChange.FIELD_RENDERING, RegistryConfigChange.SENSITIVE_VALUES}:
-            self._sensitive_values.rebuild(self.instances(), self.config.logging.masking.mode)
+        if change in {
+            RegistryConfigChange.FIELD_RENDERING,
+            RegistryConfigChange.SENSITIVE_VALUES,
+        }:
+            self._sensitive_values.rebuild(
+                self.instances(), self.config.logging.masking.mode
+            )
         if change is RegistryConfigChange.WARNING_CAPTURE:
             logging.captureWarnings(self.config.logging.warnings.capture)
             warning_logger = logging.getLogger("py.warnings")
@@ -130,14 +146,16 @@ class _ObjectRegistry:
             for root in self.root_objects():
                 root._configure_logger_tree()
 
-    def _register(self,
-                  *,
-                  name: str,
-                  cls: type[_T],
-                  abstract: bool,
-                  parent: _ParentReference = None,
-                  constructor_args: tuple[Any, ...] = (),
-                  constructor_kwargs: Mapping[str, Any] | None = None) -> type[_T]:
+    def _register(
+        self,
+        *,
+        name: str,
+        cls: type[_T],
+        abstract: bool,
+        parent: _ParentReference = None,
+        constructor_args: tuple[Any, ...] = (),
+        constructor_kwargs: Mapping[str, Any] | None = None,
+    ) -> type[_T]:
         """
         Register a decorated ``BaseObject`` subclass.  This method is intentionally private. User code should use the public ``@register(...)`` decorator, which first applies the dataclass transform and then delegates to this method.  The method validates unique registration names, prevents the same class from being registered twice, rejects constructor arguments for abstract templates, and stores the resulting registration metadata.
 
@@ -170,26 +188,34 @@ class _ObjectRegistry:
         if normalized_name in self._registrations_by_name:
             existing = self._registrations_by_name[normalized_name]
 
-            raise DuplicateRegistrationNameError(f"Registration name {normalized_name!r} is already used by "
-                                                 f"{existing.cls.__module__}.{existing.cls.__qualname__}.")
+            raise DuplicateRegistrationNameError(
+                f"Registration name {normalized_name!r} is already used by "
+                f"{existing.cls.__module__}.{existing.cls.__qualname__}."
+            )
         if cls in self._registrations_by_class:
             existing = self._registrations_by_class[cls]
-            raise RegistryError(f"Class {cls.__module__}.{cls.__qualname__} is already "
-                                f"registered as {existing.name!r}.")
+            raise RegistryError(
+                f"Class {cls.__module__}.{cls.__qualname__} is already "
+                f"registered as {existing.name!r}."
+            )
 
         # Step 3: Abstract registrations are templates, not constructible
         # objects, and therefore cannot own constructor arguments.
         if abstract and (constructor_args or kwargs):
-            raise RegistryError(f"Abstract registration {normalized_name!r} cannot have "
-                                "constructor arguments.")
+            raise RegistryError(
+                f"Abstract registration {normalized_name!r} cannot have "
+                "constructor arguments."
+            )
 
         # Step 4: Store the validated definition in both lookup indexes.
-        registration = _ObjectRegistration(name=normalized_name,
-                                           cls=cls,
-                                           abstract=abstract,
-                                           parent_reference=parent,
-                                           constructor_args=constructor_args,
-                                           constructor_kwargs=kwargs)
+        registration = _ObjectRegistration(
+            name=normalized_name,
+            cls=cls,
+            abstract=abstract,
+            parent_reference=parent,
+            constructor_args=constructor_args,
+            constructor_kwargs=kwargs,
+        )
         self._registrations_by_name[normalized_name] = registration
         self._registrations_by_class[cls] = registration
 
@@ -200,10 +226,12 @@ class _ObjectRegistry:
         # No object instance exists during registration. Use the future local
         # object logger name so the message participates in the same logging
         # namespace without adding handlers of its own.
-        _get_object_logger(normalized_name).debug("Registered class '%s.%s' as '%s'.",
-                                                  cls.__module__,
-                                                  cls.__qualname__,
-                                                  normalized_name)
+        _get_object_logger(normalized_name).debug(
+            "Registered class '%s.%s' as '%s'.",
+            cls.__module__,
+            cls.__qualname__,
+            normalized_name,
+        )
 
         return cls
 
@@ -238,12 +266,19 @@ class _ObjectRegistry:
                     continue
                 if registration.parent_reference is not None:
                     continue
-                self._instantiate_registration(registration=registration, parent_instance=None)
+                self._instantiate_registration(
+                    registration=registration, parent_instance=None
+                )
             self._built = True
-            registry_logger.debug("Built the object registry successfully with %d instances.", len(self._instances_by_name))
+            registry_logger.debug(
+                "Built the object registry successfully with %d instances.",
+                len(self._instances_by_name),
+            )
         except Exception:
             # Roll back every object and index created during a failed build.
-            registry_logger.exception("The object registry build failed! Rolling back all created instances!")
+            registry_logger.exception(
+                "The object registry build failed! Rolling back all created instances!"
+            )
             self._reset_instances()
             raise
         finally:
@@ -251,7 +286,8 @@ class _ObjectRegistry:
 
     @staticmethod
     def _constructor_masked_values(
-            registration: _ObjectRegistration) -> tuple[Any, ...]:
+        registration: _ObjectRegistration,
+    ) -> tuple[Any, ...]:
         """
         Return masked constructor values before the object instance exists.
 
@@ -280,13 +316,15 @@ class _ObjectRegistry:
             if _field_info(dataclass_field).masked
         }
 
-        return tuple(bound_arguments.arguments[name]
-                     for name in masked_names
-                     if name in bound_arguments.arguments)
+        return tuple(
+            bound_arguments.arguments[name]
+            for name in masked_names
+            if name in bound_arguments.arguments
+        )
 
-    def _instantiate_registration(self,
-                                  registration: _ObjectRegistration,
-                                  parent_instance: Optional["BaseObject"]) -> "BaseObject":
+    def _instantiate_registration(
+        self, registration: _ObjectRegistration, parent_instance: Optional["BaseObject"]
+    ) -> "BaseObject":
         """
         Instantiate one concrete registration below an optional parent.  The method derives the full hierarchical object name, reuses an already created instance for that exact path, creates a temporary construction context, invokes the dynamically typed dataclass constructor, indexes the instance, and finally materializes all matching child registrations.
 
@@ -302,38 +340,49 @@ class _ObjectRegistry:
 
         from admin_helper.objects.object import BaseObject
 
-
         if registration.abstract:
-            raise RegistryError(f"Abstract registration {registration.name!r} cannot be instantiated.")
+            raise RegistryError(
+                f"Abstract registration {registration.name!r} cannot be instantiated."
+            )
 
         # Derive the unique full path from the concrete parent instance.
-        object_name = self._build_object_name(registration=registration, parent_instance=parent_instance)
+        object_name = self._build_object_name(
+            registration=registration, parent_instance=parent_instance
+        )
         if object_name in registration.instances:
             return registration.instances[object_name]
         if object_name in self._instances_by_name:
             existing = self._instances_by_name[object_name]
-            raise DuplicateObjectNameError(f"Object name {object_name!r} is already used by {type(existing).__module__}.{type(existing).__qualname__}.")
+            raise DuplicateObjectNameError(
+                f"Object name {object_name!r} is already used by {type(existing).__module__}.{type(existing).__qualname__}."
+            )
 
         # Emit the creation message through the future object logger. It has no
         # handlers by default and therefore follows normal parent/root logging.
         configured_logger = registration.constructor_kwargs.get("logger_config")
-        if (isinstance(configured_logger, ObjectLoggerConfig)
-                and isinstance(configured_logger.logger_class, type)):
+        if isinstance(configured_logger, ObjectLoggerConfig) and isinstance(
+            configured_logger.logger_class, type
+        ):
             logger_class = configured_logger.logger_class
         elif parent_instance is not None:
             logger_class = parent_instance._resolved_logger_config.logger_class
         else:
             logger_class = ObjectLogger
-        construction_logger = _get_object_logger(name=object_name,
-                                                 logger_class=logger_class)
-        construction_logger.debug("Instantiating '%s' from class '%s.%s'.",
-                                  object_name,
-                                  registration.cls.__module__,
-                                  registration.cls.__qualname__)
+        construction_logger = _get_object_logger(
+            name=object_name, logger_class=logger_class
+        )
+        construction_logger.debug(
+            "Instantiating '%s' from class '%s.%s'.",
+            object_name,
+            registration.cls.__module__,
+            registration.cls.__qualname__,
+        )
 
         # Publish framework-owned values only for the duration of this one
         # constructor call. BaseObject.__post_init__ consumes this context.
-        context = _ConstructionContext(registration=registration, object_name=object_name, parent=parent_instance)
+        context = _ConstructionContext(
+            registration=registration, object_name=object_name, parent=parent_instance
+        )
         token = _construction_context.set(context)
 
         temporary_masked_values = self._constructor_masked_values(registration)
@@ -344,10 +393,14 @@ class _ObjectRegistry:
             # Constructor signatures differ between registered dataclasses. At
             # this dynamic boundary the safe common result type is BaseObject.
             constructor = cast(Callable[..., BaseObject], registration.cls)
-            instance = constructor(*registration.constructor_args, **registration.constructor_kwargs)
+            instance = constructor(
+                *registration.constructor_args, **registration.constructor_kwargs
+            )
         except Exception as error:
-            raise RegistryError(f"Could not instantiate registration {registration.name!r} as object {object_name!r} using "
-                                f"{registration.cls.__module__}.{registration.cls.__qualname__}: {error}") from error
+            raise RegistryError(
+                f"Could not instantiate registration {registration.name!r} as object {object_name!r} using "
+                f"{registration.cls.__module__}.{registration.cls.__qualname__}: {error}"
+            ) from error
         finally:
             for masked_value in temporary_masked_values:
                 _sensitive_value_registry().unregister(masked_value)
@@ -358,14 +411,16 @@ class _ObjectRegistry:
         registration.instances[object_name] = instance
         self._index_instance(instance)
         self._instance_registrations[id(instance)] = registration
-        self._instantiate_children(parent_instance=instance, parent_registration=registration)
+        self._instantiate_children(
+            parent_instance=instance, parent_registration=registration
+        )
         instance.logger.debug("Added %s to all lookup indexes.", instance)
 
         return instance
 
-    def _instantiate_children(self,
-                              parent_instance: BaseObject,
-                              parent_registration: _ObjectRegistration) -> None:
+    def _instantiate_children(
+        self, parent_instance: BaseObject, parent_registration: _ObjectRegistration
+    ) -> None:
         """
         Instantiate all registrations that belong below one parent instance.  Concrete parent references match one exact registration. Abstract parent references act as templates and match concrete instances derived from the abstract class. This is what allows template children to be cloned below every concrete implementation of an abstract registration.
 
@@ -399,7 +454,9 @@ class _ObjectRegistry:
                     continue
             elif template_parent is not parent_registration:
                 continue
-            self._instantiate_registration(registration=child_registration, parent_instance=parent_instance)
+            self._instantiate_registration(
+                registration=child_registration, parent_instance=parent_instance
+            )
 
     def _validate_all_subclasses_registered(self) -> None:
         """
@@ -415,19 +472,22 @@ class _ObjectRegistry:
         # single diagnostic instead of failing one class at a time.
         missing: list[type[BaseObject]] = []
 
-
         for subclass in self._all_subclasses(BaseObject):
             if subclass not in self._registrations_by_class:
                 missing.append(subclass)
         if not missing:
             return
-        missing_names = "\n".join(f"  - {cls.__module__}.{cls.__qualname__}" for cls in sorted(missing,
-                                                                                               key=lambda item: (
-                                                                                                   item.__module__,
-                                                                                                   item.__qualname__)))
-        raise UnregisteredSubclassError("The following BaseObject subclasses were not registered:\n"
-                                        f"{missing_names}\n"
-                                        "Decorate every subclass with @register(...).")
+        missing_names = "\n".join(
+            f"  - {cls.__module__}.{cls.__qualname__}"
+            for cls in sorted(
+                missing, key=lambda item: (item.__module__, item.__qualname__)
+            )
+        )
+        raise UnregisteredSubclassError(
+            "The following BaseObject subclasses were not registered:\n"
+            f"{missing_names}\n"
+            "Decorate every subclass with @register(...)."
+        )
 
     def _validate_parent_references(self) -> None:
         """
@@ -457,7 +517,9 @@ class _ObjectRegistry:
             if _registration.name in visited:
                 return
             if _registration.name in visiting:
-                raise ObjectTreeLoopError(f"Parent loop detected at registration {_registration.name!r}.")
+                raise ObjectTreeLoopError(
+                    f"Parent loop detected at registration {_registration.name!r}."
+                )
             visiting.add(_registration.name)
             parent = self._resolve_parent_registration(_registration)
             if parent is not None:
@@ -483,7 +545,9 @@ class _ObjectRegistry:
         visited: set[type[BaseObject]] = set()
 
         def collect(current: type[BaseObject]) -> None:
-            subclasses = cast(list[type[BaseObject]], cast(object, current.__subclasses__()))
+            subclasses = cast(
+                list[type[BaseObject]], cast(object, current.__subclasses__())
+            )
             for subclass in subclasses:
                 if subclass in visited:
                     continue
@@ -495,8 +559,9 @@ class _ObjectRegistry:
 
         return tuple(result)
 
-    def _resolve_parent_registration(self,
-                                     registration: _ObjectRegistration) -> _ObjectRegistration | None:
+    def _resolve_parent_registration(
+        self, registration: _ObjectRegistration
+    ) -> _ObjectRegistration | None:
         """
         Resolve a registration's parent reference to registration metadata.  A parent may be omitted, referenced by its registration name, or referenced by the registered class object. The method never returns an instance because it operates on the definition graph before object construction.
 
@@ -519,17 +584,22 @@ class _ObjectRegistry:
             try:
                 return self._registrations_by_name[normalized_name]
             except KeyError:
-                raise ParentResolutionError(f"Parent {normalized_name!r} of registration {registration.name!r} is not registered.") from None
+                raise ParentResolutionError(
+                    f"Parent {normalized_name!r} of registration {registration.name!r} is not registered."
+                ) from None
         if isinstance(reference, type) and issubclass(reference, BaseObject):
             try:
                 return self._registrations_by_class[reference]
             except KeyError:
-                raise ParentResolutionError(f"Parent class {reference.__module__}.{reference.__qualname__} "
-                                            f"of registration {registration.name!r} is not registered.") from None
-        raise ParentResolutionError(f"Invalid parent reference {reference!r} for registration {registration.name!r}.")
+                raise ParentResolutionError(
+                    f"Parent class {reference.__module__}.{reference.__qualname__} "
+                    f"of registration {registration.name!r} is not registered."
+                ) from None
+        raise ParentResolutionError(
+            f"Invalid parent reference {reference!r} for registration {registration.name!r}."
+        )
 
-    def _get_registration(self,
-                          name: str) -> _ObjectRegistration:
+    def _get_registration(self, name: str) -> _ObjectRegistration:
         """
         Return registration metadata by its unique registration name.
 
@@ -546,8 +616,7 @@ class _ObjectRegistry:
         except KeyError:
             raise KeyError(f"No registration exists as {normalized_name!r}.") from None
 
-    def _get_registration_by_class(self,
-                                   cls: type[_T]) -> _ObjectRegistration:
+    def _get_registration_by_class(self, cls: type[_T]) -> _ObjectRegistration:
         """
         Return registration metadata for one registered class.  This helper is private because mutable registration metadata is an internal implementation detail and should not be exposed as normal user API.
 
@@ -558,11 +627,12 @@ class _ObjectRegistry:
         try:
             return self._registrations_by_class[cls]
         except KeyError:
-            raise KeyError(f"Class {cls.__module__}.{cls.__qualname__} is not registered.") from None
+            raise KeyError(
+                f"Class {cls.__module__}.{cls.__qualname__} is not registered."
+            ) from None
 
     @overload
-    def get_by_name(self,
-                    name: str) -> BaseObject:
+    def get_by_name(self, name: str) -> BaseObject:
         """
         Return exactly one instantiated object by full name or unique suffix.
 
@@ -580,9 +650,7 @@ class _ObjectRegistry:
         ...
 
     @overload
-    def get_by_name(self,
-                    name: str,
-                    expected_type: type[_T]) -> _T:
+    def get_by_name(self, name: str, expected_type: type[_T]) -> _T:
         """
         Return exactly one instantiated object by full name or unique suffix.
 
@@ -602,9 +670,9 @@ class _ObjectRegistry:
 
         ...
 
-    def get_by_name(self,
-                    name: str,
-                    expected_type: type[_T] | None = None) -> BaseObject | _T:
+    def get_by_name(
+        self, name: str, expected_type: type[_T] | None = None
+    ) -> BaseObject | _T:
         """
         Return exactly one instantiated object by full name or unique suffix.
 
@@ -630,25 +698,32 @@ class _ObjectRegistry:
             # names with the caller-provided expected type.
             matching_instances = self._instances_by_path.get(normalized_name, [])
             if expected_type is not None:
-                matching_instances = [matching_instance
-                                      for matching_instance in matching_instances
-                                      if isinstance(matching_instance, expected_type)]
+                matching_instances = [
+                    matching_instance
+                    for matching_instance in matching_instances
+                    if isinstance(matching_instance, expected_type)
+                ]
             if not matching_instances:
                 raise KeyError(f"No instantiated object exists as {normalized_name!r}.")
             if len(matching_instances) > 1:
-                matching_names = tuple(matching_instance.name for matching_instance in matching_instances)
-                raise AmbiguousObjectNameError(f"Object name {normalized_name!r} is ambiguous. "
-                                               f"Matching objects: {matching_names!r}.")
+                matching_names = tuple(
+                    matching_instance.name for matching_instance in matching_instances
+                )
+                raise AmbiguousObjectNameError(
+                    f"Object name {normalized_name!r} is ambiguous. "
+                    f"Matching objects: {matching_names!r}."
+                )
             instance = matching_instances[0]
 
         if expected_type is not None and not isinstance(instance, expected_type):
-            raise TypeError(f"Object {instance.name!r} contains {type(instance).__name__}, not {expected_type.__name__}.")
+            raise TypeError(
+                f"Object {instance.name!r} contains {type(instance).__name__}, not {expected_type.__name__}."
+            )
 
         return instance
 
     @overload
-    def find_by_name(self,
-                     pattern: str) -> tuple[BaseObject, ...]:
+    def find_by_name(self, pattern: str) -> tuple[BaseObject, ...]:
         """
         Find zero or more objects using segment-aware wildcard matching.  ``*`` matches exactly one hierarchy segment, while ``**`` matches zero or more segments. The search also considers every valid suffix path and removes duplicate instances that matched through multiple suffixes.
 
@@ -666,9 +741,7 @@ class _ObjectRegistry:
         ...
 
     @overload
-    def find_by_name(self,
-                     pattern: str,
-                     expected_type: type[_T]) -> tuple[_T, ...]:
+    def find_by_name(self, pattern: str, expected_type: type[_T]) -> tuple[_T, ...]:
         """
         Find zero or more objects using segment-aware wildcard matching.  ``*`` matches exactly one hierarchy segment, while ``**`` matches zero or more segments. The search also considers every valid suffix path and removes duplicate instances that matched through multiple suffixes.
 
@@ -688,9 +761,9 @@ class _ObjectRegistry:
 
         ...
 
-    def find_by_name(self,
-                     pattern: str,
-                     expected_type: type[_T] | None = None) -> tuple[BaseObject, ...] | tuple[_T, ...]:
+    def find_by_name(
+        self, pattern: str, expected_type: type[_T] | None = None
+    ) -> tuple[BaseObject, ...] | tuple[_T, ...]:
         """
         Find zero or more objects using segment-aware wildcard matching.  ``*`` matches exactly one hierarchy segment, while ``**`` matches zero or more segments. The search also considers every valid suffix path and removes duplicate instances that matched through multiple suffixes.
 
@@ -719,13 +792,17 @@ class _ObjectRegistry:
         # de-duplication guarantees that it appears only once in the result.
         visited: set[int] = set()
         for object_path, instances in self._instances_by_path.items():
-            if not self._match_object_path(object_name=object_path, pattern=normalized_pattern):
+            if not self._match_object_path(
+                object_name=object_path, pattern=normalized_pattern
+            ):
                 continue
             for instance in instances:
                 identity = id(instance)
                 if identity in visited:
                     continue
-                if expected_type is not None and not isinstance(instance, expected_type):
+                if expected_type is not None and not isinstance(
+                    instance, expected_type
+                ):
                     continue
                 visited.add(identity)
                 result.append(instance)
@@ -735,8 +812,7 @@ class _ObjectRegistry:
         return tuple(result)
 
     @overload
-    def get_class(self,
-                  name: str) -> type[BaseObject]:
+    def get_class(self, name: str) -> type[BaseObject]:
         """
         Return the registered class for a registration name.  When ``expected_type`` is supplied, the method additionally verifies that the registered class is a subclass of the requested base type.
 
@@ -750,9 +826,7 @@ class _ObjectRegistry:
         ...
 
     @overload
-    def get_class(self,
-                  name: str,
-                  expected_type: type[_T]) -> type[_T]:
+    def get_class(self, name: str, expected_type: type[_T]) -> type[_T]:
         """
         Return the registered class for a registration name.  When ``expected_type`` is supplied, the method additionally verifies that the registered class is a subclass of the requested base type.
 
@@ -768,9 +842,9 @@ class _ObjectRegistry:
 
         ...
 
-    def get_class(self,
-                  name: str,
-                  expected_type: type[_T] | None = None) -> type[BaseObject] | type[_T]:
+    def get_class(
+        self, name: str, expected_type: type[_T] | None = None
+    ) -> type[BaseObject] | type[_T]:
         """
         Return the registered class for a registration name.  When ``expected_type`` is supplied, the method additionally verifies that the registered class is a subclass of the requested base type.
 
@@ -787,15 +861,16 @@ class _ObjectRegistry:
         registration = self._get_registration(name)
         cls = registration.cls
         if expected_type is not None and not issubclass(cls, expected_type):
-            raise TypeError(f"Registered class {cls.__name__} is not a subclass of "
-                            f"{expected_type.__name__}.")
+            raise TypeError(
+                f"Registered class {cls.__name__} is not a subclass of "
+                f"{expected_type.__name__}."
+            )
         if expected_type is not None:
             return cls
 
         return cls
 
-    def get_by_type(self,
-                    expected_type: type[_T]) -> tuple[_T, ...]:
+    def get_by_type(self, expected_type: type[_T]) -> tuple[_T, ...]:
         """
         Return all instantiated objects compatible with ``expected_type``.
 
@@ -806,10 +881,13 @@ class _ObjectRegistry:
             Returns an immutable tuple containing the requested values.
         """
 
-        return tuple(instance for instance in self._instances_by_name.values() if isinstance(instance, expected_type))
+        return tuple(
+            instance
+            for instance in self._instances_by_name.values()
+            if isinstance(instance, expected_type)
+        )
 
-    def _children_of(self,
-                     parent: BaseObject) -> tuple[BaseObject, ...]:
+    def _children_of(self, parent: BaseObject) -> tuple[BaseObject, ...]:
         """
         Return a read-only tuple view of one object's direct children.
 
@@ -822,9 +900,7 @@ class _ObjectRegistry:
 
         return tuple(parent._children)
 
-    def _get_child_by_name(self,
-                           parent: BaseObject,
-                           name: str) -> BaseObject | None:
+    def _get_child_by_name(self, parent: BaseObject, name: str) -> BaseObject | None:
         """
         Resolve a descendant path relative to one parent object.  The supplied name may be relative, such as ``routes.static_files``, or already start with the parent's complete path. Only objects below the supplied parent are accepted.
 
@@ -856,9 +932,9 @@ class _ObjectRegistry:
 
         return None
 
-    def _get_children_by_type(self,
-                              parent: BaseObject,
-                              expected_type: type[_T]) -> tuple[_T, ...]:
+    def _get_children_by_type(
+        self, parent: BaseObject, expected_type: type[_T]
+    ) -> tuple[_T, ...]:
         """
         Return direct children compatible with ``expected_type``.
 
@@ -872,11 +948,13 @@ class _ObjectRegistry:
             Returns an immutable tuple containing the requested values.
         """
 
-        return tuple(child for child in self._children_of(parent) if isinstance(child, expected_type))
+        return tuple(
+            child
+            for child in self._children_of(parent)
+            if isinstance(child, expected_type)
+        )
 
-    def _attach_child(self,
-                      parent: BaseObject,
-                      child: _T) -> _T:
+    def _attach_child(self, parent: BaseObject, child: _T) -> _T:
         """
         Attach or move a child while preserving tree, index, and logger state.
 
@@ -895,17 +973,23 @@ class _ObjectRegistry:
         object.__setattr__(child, "_status", ObjectStatus.MOVING)
 
         try:
-            with child.logger.context("object.move",
-                                      object_name=child.name,
-                                      old_parent=old_parent_name,
-                                      new_parent=parent.name):
+            with child.logger.context(
+                "object.move",
+                object_name=child.name,
+                old_parent=old_parent_name,
+                new_parent=parent.name,
+            ):
                 # Reject self-parenting and moves that would create a cycle.
                 if parent is child:
-                    raise ObjectTreeLoopError(f"{child.name!r} cannot be its own parent.")
+                    raise ObjectTreeLoopError(
+                        f"{child.name!r} cannot be its own parent."
+                    )
                 current: BaseObject | None = parent
                 while current is not None:
                     if current is child:
-                        raise ObjectTreeLoopError(f"Attaching {child.name!r} below {parent.name!r} would create a parent loop.")
+                        raise ObjectTreeLoopError(
+                            f"Attaching {child.name!r} below {parent.name!r} would create a parent loop."
+                        )
                     current = current.parent
                 if child.parent is parent and child in parent._children:
                     child.logger.debug("%s is already attached to %s.", child, parent)
@@ -923,17 +1007,24 @@ class _ObjectRegistry:
                 # Compute and validate every future subtree name transactionally.
                 subtree = (child, *child.children_flat)
                 old_names = {id(instance): instance.name for instance in subtree}
-                new_names = {id(instance): new_name + instance.name[len(old_name):] for instance in subtree}
+                new_names = {
+                    id(instance): new_name + instance.name[len(old_name) :]
+                    for instance in subtree
+                }
                 subtree_ids = {id(instance) for instance in subtree}
                 for instance in subtree:
                     instance_name = new_names[id(instance)]
                     existing = self._instances_by_name.get(instance_name)
                     if existing is not None and id(existing) not in subtree_ids:
-                        raise DuplicateObjectNameError(f"Object name {instance_name!r} already exists.")
+                        raise DuplicateObjectNameError(
+                            f"Object name {instance_name!r} already exists."
+                        )
 
                 # Replace names, parent links, registration indexes, and suffix indexes.
                 for instance in subtree:
-                    self._unindex_instance(instance, object_name=old_names[id(instance)])
+                    self._unindex_instance(
+                        instance, object_name=old_names[id(instance)]
+                    )
                 with child._unlocked():
                     child.parent = parent
                 for instance in subtree:
@@ -995,10 +1086,11 @@ class _ObjectRegistry:
             Returns an immutable tuple containing the requested values.
         """
 
-        return tuple(instance for instance in self.instances() if instance.parent is None)
+        return tuple(
+            instance for instance in self.instances() if instance.parent is None
+        )
 
-    def __contains__(self,
-                     name: str) -> bool:
+    def __contains__(self, name: str) -> bool:
         """
         Test whether an exact full object name exists in the registry.
 
@@ -1021,8 +1113,7 @@ class _ObjectRegistry:
 
         return iter(self._registrations_by_name.values())
 
-    def _index_instance(self,
-                        instance: BaseObject) -> None:
+    def _index_instance(self, instance: BaseObject) -> None:
         """
         Add an instance to the exact-name and suffix-path indexes.
 
@@ -1042,9 +1133,9 @@ class _ObjectRegistry:
             if not any(path_instance is instance for path_instance in path_instances):
                 path_instances.append(instance)
 
-    def _unindex_instance(self,
-                          instance: BaseObject,
-                          object_name: str | None = None) -> None:
+    def _unindex_instance(
+        self, instance: BaseObject, object_name: str | None = None
+    ) -> None:
         """
         Remove an instance from all indexes for one previously used name.
 
@@ -1065,9 +1156,11 @@ class _ObjectRegistry:
             path_instances = self._instances_by_path.get(object_path)
             if path_instances is None:
                 continue
-            self._instances_by_path[object_path] = [path_instance
-                                                    for path_instance in path_instances
-                                                    if path_instance is not instance]
+            self._instances_by_path[object_path] = [
+                path_instance
+                for path_instance in path_instances
+                if path_instance is not instance
+            ]
             path_instances = self._instances_by_path[object_path]
             if not path_instances:
                 del self._instances_by_path[object_path]
@@ -1088,8 +1181,7 @@ class _ObjectRegistry:
         return tuple(".".join(name_parts[index:]) for index in range(len(name_parts)))
 
     @staticmethod
-    def _match_object_path(object_name: str,
-                           pattern: str) -> bool:
+    def _match_object_path(object_name: str, pattern: str) -> bool:
         """
         Match one dot-separated object path against a wildcard pattern.  Matching is segment based: ordinary shell wildcards are applied inside one segment, ``*`` therefore cannot cross a dot, and the special segment ``**`` can consume any number of hierarchy levels.
 
@@ -1108,8 +1200,7 @@ class _ObjectRegistry:
         object_parts = object_name.split(".")
         pattern_parts = pattern.split(".")
 
-        def match(object_index: int,
-                  pattern_index: int) -> bool:
+        def match(object_index: int, pattern_index: int) -> bool:
             """
             Recursively compare object-path and pattern segments.
 
@@ -1137,9 +1228,9 @@ class _ObjectRegistry:
         return match(0, 0)
 
     @classmethod
-    def _build_object_name(cls,
-                           registration: _ObjectRegistration,
-                           parent_instance: BaseObject | None) -> str:
+    def _build_object_name(
+        cls, registration: _ObjectRegistration, parent_instance: BaseObject | None
+    ) -> str:
         """
         Build a full object name from a registration and optional parent.
 

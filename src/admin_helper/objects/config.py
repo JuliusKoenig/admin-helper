@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import Callable, Any, Iterator, Mapping, TYPE_CHECKING
 
 from admin_helper.exceptions import LoggerConfigurationError
-from admin_helper.objects.field import DEFAULT_MASKED_FIELD_VALUE, DEFAULT_NOT_SET_FIELD_VALUE, DEFAULT_EMPTY_FIELD_VALUES
+from admin_helper.objects.field import (
+    DEFAULT_MASKED_FIELD_VALUE,
+    DEFAULT_NOT_SET_FIELD_VALUE,
+    DEFAULT_EMPTY_FIELD_VALUES,
+)
 
 if TYPE_CHECKING:
     from admin_helper.objects.logger import ObjectLogger
@@ -42,7 +46,11 @@ class _ObservableConfig:
     _change_kind: RegistryConfigChange | None = None
     _ready: bool = False
 
-    def _finish_init(self, on_change: Callable[[RegistryConfigChange], None] | None, change_kind: RegistryConfigChange) -> None:
+    def _finish_init(
+        self,
+        on_change: Callable[[RegistryConfigChange], None] | None,
+        change_kind: RegistryConfigChange,
+    ) -> None:
         object.__setattr__(self, "_on_change", on_change)
         object.__setattr__(self, "_change_kind", change_kind)
         object.__setattr__(self, "_ready", True)
@@ -99,8 +107,12 @@ class WarningFrameworkConfig(_ObservableConfig):
 
 @dataclass(slots=True)
 class LoggingFrameworkConfig:
-    masking: MaskingFrameworkConfig = dataclass_field(default_factory=MaskingFrameworkConfig)
-    warnings: WarningFrameworkConfig = dataclass_field(default_factory=WarningFrameworkConfig)
+    masking: MaskingFrameworkConfig = dataclass_field(
+        default_factory=MaskingFrameworkConfig
+    )
+    warnings: WarningFrameworkConfig = dataclass_field(
+        default_factory=WarningFrameworkConfig
+    )
 
 
 class ObjectRegistryConfig:
@@ -114,9 +126,15 @@ class ObjectRegistryConfig:
         self._bind_children()
 
     def _bind_children(self) -> None:
-        self.fields._finish_init(self._mark_changed, RegistryConfigChange.FIELD_RENDERING)
-        self.logging.masking._finish_init(self._mark_changed, RegistryConfigChange.SENSITIVE_VALUES)
-        self.logging.warnings._finish_init(self._mark_changed, RegistryConfigChange.WARNING_CAPTURE)
+        self.fields._finish_init(
+            self._mark_changed, RegistryConfigChange.FIELD_RENDERING
+        )
+        self.logging.masking._finish_init(
+            self._mark_changed, RegistryConfigChange.SENSITIVE_VALUES
+        )
+        self.logging.warnings._finish_init(
+            self._mark_changed, RegistryConfigChange.WARNING_CAPTURE
+        )
 
     def _mark_changed(self, change: RegistryConfigChange) -> None:
         self._pending.add(change)
@@ -137,8 +155,12 @@ class ObjectRegistryConfig:
                 self.apply()
 
     def apply(self) -> None:
-        order = (RegistryConfigChange.FIELD_RENDERING, RegistryConfigChange.SENSITIVE_VALUES,
-                 RegistryConfigChange.WARNING_CAPTURE, RegistryConfigChange.LOGGER_TREE)
+        order = (
+            RegistryConfigChange.FIELD_RENDERING,
+            RegistryConfigChange.SENSITIVE_VALUES,
+            RegistryConfigChange.WARNING_CAPTURE,
+            RegistryConfigChange.LOGGER_TREE,
+        )
         pending = tuple(change for change in order if change in self._pending)
         self._pending.clear()
         for change in pending:
@@ -209,22 +231,18 @@ class LoggerContextConfig:
     console_masking: bool | LoggerConfigValue = LoggerConfigValue.AUTO
     file_masking: bool | LoggerConfigValue = LoggerConfigValue.AUTO
 
-    _on_change: Callable[[], None] | None = dataclass_field(default=None,
-                                                            init=False,
-                                                            repr=False,
-                                                            compare=False)
-    _notifications_enabled: bool = dataclass_field(default=False,
-                                                   init=False,
-                                                   repr=False,
-                                                   compare=False)
+    _on_change: Callable[[], None] | None = dataclass_field(
+        default=None, init=False, repr=False, compare=False
+    )
+    _notifications_enabled: bool = dataclass_field(
+        default=False, init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         self._validate()
         object.__setattr__(self, "_notifications_enabled", True)
 
-    def __setattr__(self,
-                    key: str,
-                    value: Any) -> None:
+    def __setattr__(self, key: str, value: Any) -> None:
         if not key.startswith("_") and getattr(self, "_notifications_enabled", False):
             self._validate_value(key, value)
         object.__setattr__(self, key, value)
@@ -237,28 +255,32 @@ class LoggerContextConfig:
         object.__setattr__(result, "_notifications_enabled", True)
         return result
 
-    def configure(self,
-                  *,
-                  level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT,
-                  console_level: int | str | LoggerConfigValue = LoggerConfigValue.AUTO,
-                  file_level: int | str | LoggerConfigValue = LoggerConfigValue.AUTO,
-                  format: str | LoggerConfigValue = LoggerConfigValue.INHERIT,
-                  console_format: str | LoggerConfigValue = LoggerConfigValue.AUTO,
-                  file_format: str | LoggerConfigValue = LoggerConfigValue.AUTO,
-                  masking: bool | LoggerConfigValue = LoggerConfigValue.INHERIT,
-                  console_masking: bool | LoggerConfigValue = LoggerConfigValue.AUTO,
-                  file_masking: bool | LoggerConfigValue = LoggerConfigValue.AUTO) -> None:
+    def configure(
+        self,
+        *,
+        level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT,
+        console_level: int | str | LoggerConfigValue = LoggerConfigValue.AUTO,
+        file_level: int | str | LoggerConfigValue = LoggerConfigValue.AUTO,
+        format: str | LoggerConfigValue = LoggerConfigValue.INHERIT,
+        console_format: str | LoggerConfigValue = LoggerConfigValue.AUTO,
+        file_format: str | LoggerConfigValue = LoggerConfigValue.AUTO,
+        masking: bool | LoggerConfigValue = LoggerConfigValue.INHERIT,
+        console_masking: bool | LoggerConfigValue = LoggerConfigValue.AUTO,
+        file_masking: bool | LoggerConfigValue = LoggerConfigValue.AUTO,
+    ) -> None:
         """Apply context-specific level and format overrides."""
 
-        values = {"level": level,
-                  "console_level": console_level,
-                  "file_level": file_level,
-                  "format": format,
-                  "console_format": console_format,
-                  "file_format": file_format,
-                  "masking": masking,
-                  "console_masking": console_masking,
-                  "file_masking": file_masking}
+        values = {
+            "level": level,
+            "console_level": console_level,
+            "file_level": file_level,
+            "format": format,
+            "console_format": console_format,
+            "file_format": file_format,
+            "masking": masking,
+            "console_masking": console_masking,
+            "file_masking": file_masking,
+        }
         for name, value in values.items():
             self._validate_value(name, value)
         object.__setattr__(self, "status", LoggerContextStatus.CONFIGURED)
@@ -268,7 +290,17 @@ class LoggerContextConfig:
 
     def inherit(self) -> None:
         object.__setattr__(self, "status", LoggerContextStatus.INHERIT)
-        for name in ("level", "console_level", "file_level", "format", "console_format", "file_format", "masking", "console_masking", "file_masking"):
+        for name in (
+            "level",
+            "console_level",
+            "file_level",
+            "format",
+            "console_format",
+            "file_format",
+            "masking",
+            "console_masking",
+            "file_masking",
+        ):
             object.__setattr__(self, name, LoggerConfigValue.INHERIT)
         self._notify()
 
@@ -276,8 +308,7 @@ class LoggerContextConfig:
         object.__setattr__(self, "status", LoggerContextStatus.DISABLED)
         self._notify()
 
-    def _bind(self,
-              on_change: Callable[[], None]) -> None:
+    def _bind(self, on_change: Callable[[], None]) -> None:
         object.__setattr__(self, "_on_change", on_change)
 
     def _unbind(self) -> None:
@@ -288,29 +319,52 @@ class LoggerContextConfig:
             self._on_change()
 
     def _validate(self) -> None:
-        for name in ("status", "level", "console_level", "file_level", "format", "console_format", "file_format"):
+        for name in (
+            "status",
+            "level",
+            "console_level",
+            "file_level",
+            "format",
+            "console_format",
+            "file_format",
+        ):
             self._validate_value(name, getattr(self, name))
 
     @staticmethod
-    def _validate_value(name: str,
-                        value: Any) -> None:
+    def _validate_value(name: str, value: Any) -> None:
         if name == "status":
-            if not isinstance(value, LoggerContextStatus) or value is LoggerContextStatus.UNDEFINED:
-                raise LoggerConfigurationError("A stored logging context must use INHERIT, CONFIGURED, or DISABLED.")
+            if (
+                not isinstance(value, LoggerContextStatus)
+                or value is LoggerContextStatus.UNDEFINED
+            ):
+                raise LoggerConfigurationError(
+                    "A stored logging context must use INHERIT, CONFIGURED, or DISABLED."
+                )
             return
         if value is LoggerConfigValue.INHERIT:
             return
         if value is LoggerConfigValue.AUTO:
-            if name in {"console_level", "file_level", "console_format", "file_format", "console_masking", "file_masking"}:
+            if name in {
+                "console_level",
+                "file_level",
+                "console_format",
+                "file_format",
+                "console_masking",
+                "file_masking",
+            }:
                 return
             raise LoggerConfigurationError(f"{name} cannot use LoggerConfigValue.AUTO.")
         if name in {"masking", "console_masking", "file_masking"}:
             if not isinstance(value, bool):
-                raise LoggerConfigurationError(f"{name} must be bool, INHERIT, or AUTO.")
+                raise LoggerConfigurationError(
+                    f"{name} must be bool, INHERIT, or AUTO."
+                )
             return
         if name.endswith("format") or name == "format":
             if not isinstance(value, str):
-                raise LoggerConfigurationError(f"{name} must be str or LoggerConfigValue.INHERIT.")
+                raise LoggerConfigurationError(
+                    f"{name} must be str or LoggerConfigValue.INHERIT."
+                )
             return
         ObjectLoggerConfig._normalize_level(value)
 
@@ -318,15 +372,13 @@ class LoggerContextConfig:
 class ObjectLoggerContexts:
     """Manage named context-specific level and format configurations."""
 
-    def __init__(self,
-                 entries: Mapping[str, LoggerContextConfig] | None = None):
+    def __init__(self, entries: Mapping[str, LoggerContextConfig] | None = None):
         self._entries: dict[str, LoggerContextConfig] = {}
         self._on_change: Callable[[], None] | None = None
         for name, config in (entries or {}).items():
             self._store(name, config.copy(), notify=False)
 
-    def __contains__(self,
-                     name: str) -> bool:
+    def __contains__(self, name: str) -> bool:
         return self.status(name) is not LoggerContextStatus.UNDEFINED
 
     def __iter__(self) -> Iterator[str]:
@@ -335,64 +387,64 @@ class ObjectLoggerContexts:
     def copy(self) -> "ObjectLoggerContexts":
         return ObjectLoggerContexts(self._entries)
 
-    def status(self,
-               name: str) -> LoggerContextStatus:
+    def status(self, name: str) -> LoggerContextStatus:
         entry = self._entries.get(self._normalize_name(name))
         return entry.status if entry is not None else LoggerContextStatus.UNDEFINED
 
-    def get(self,
-            name: str) -> LoggerContextConfig | None:
+    def get(self, name: str) -> LoggerContextConfig | None:
         return self._entries.get(self._normalize_name(name))
 
-    def require(self,
-                name: str) -> LoggerContextConfig:
+    def require(self, name: str) -> LoggerContextConfig:
         normalized_name = self._normalize_name(name)
         try:
             return self._entries[normalized_name]
         except KeyError:
-            raise KeyError(f"Logging context '{normalized_name}' is undefined.") from None
+            raise KeyError(
+                f"Logging context '{normalized_name}' is undefined."
+            ) from None
 
-    def configure(self,
-                  name: str,
-                  *,
-                  level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT,
-                  console_level: int | str | LoggerConfigValue = LoggerConfigValue.AUTO,
-                  file_level: int | str | LoggerConfigValue = LoggerConfigValue.AUTO,
-                  format: str | LoggerConfigValue = LoggerConfigValue.INHERIT,
-                  console_format: str | LoggerConfigValue = LoggerConfigValue.AUTO,
-                  file_format: str | LoggerConfigValue = LoggerConfigValue.AUTO,
-                  masking: bool | LoggerConfigValue = LoggerConfigValue.INHERIT,
-                  console_masking: bool | LoggerConfigValue = LoggerConfigValue.AUTO,
-                  file_masking: bool | LoggerConfigValue = LoggerConfigValue.AUTO) -> LoggerContextConfig:
+    def configure(
+        self,
+        name: str,
+        *,
+        level: int | str | LoggerConfigValue = LoggerConfigValue.INHERIT,
+        console_level: int | str | LoggerConfigValue = LoggerConfigValue.AUTO,
+        file_level: int | str | LoggerConfigValue = LoggerConfigValue.AUTO,
+        format: str | LoggerConfigValue = LoggerConfigValue.INHERIT,
+        console_format: str | LoggerConfigValue = LoggerConfigValue.AUTO,
+        file_format: str | LoggerConfigValue = LoggerConfigValue.AUTO,
+        masking: bool | LoggerConfigValue = LoggerConfigValue.INHERIT,
+        console_masking: bool | LoggerConfigValue = LoggerConfigValue.AUTO,
+        file_masking: bool | LoggerConfigValue = LoggerConfigValue.AUTO,
+    ) -> LoggerContextConfig:
         """Create or replace one context configuration."""
 
-        entry = LoggerContextConfig(status=LoggerContextStatus.CONFIGURED,
-                                    level=level,
-                                    console_level=console_level,
-                                    file_level=file_level,
-                                    format=format,
-                                    console_format=console_format,
-                                    file_format=file_format,
-                                    masking=masking,
-                                    console_masking=console_masking,
-                                    file_masking=file_masking)
+        entry = LoggerContextConfig(
+            status=LoggerContextStatus.CONFIGURED,
+            level=level,
+            console_level=console_level,
+            file_level=file_level,
+            format=format,
+            console_format=console_format,
+            file_format=file_format,
+            masking=masking,
+            console_masking=console_masking,
+            file_masking=file_masking,
+        )
         self._store(name, entry)
         return entry
 
-    def inherit(self,
-                name: str) -> LoggerContextConfig:
+    def inherit(self, name: str) -> LoggerContextConfig:
         entry = LoggerContextConfig(status=LoggerContextStatus.INHERIT)
         self._store(name, entry)
         return entry
 
-    def disable(self,
-                name: str) -> LoggerContextConfig:
+    def disable(self, name: str) -> LoggerContextConfig:
         entry = LoggerContextConfig(status=LoggerContextStatus.DISABLED)
         self._store(name, entry)
         return entry
 
-    def remove(self,
-               name: str) -> None:
+    def remove(self, name: str) -> None:
         normalized_name = self._normalize_name(name)
         entry = self._entries.pop(normalized_name, None)
         if entry is not None:
@@ -410,8 +462,7 @@ class ObjectLoggerContexts:
     def items(self) -> tuple[tuple[str, LoggerContextConfig], ...]:
         return tuple(self._entries.items())
 
-    def _bind(self,
-              on_change: Callable[[], None]) -> None:
+    def _bind(self, on_change: Callable[[], None]) -> None:
         self._on_change = on_change
         for entry in self._entries.values():
             entry._bind(on_change)
@@ -421,11 +472,9 @@ class ObjectLoggerContexts:
         for entry in self._entries.values():
             entry._unbind()
 
-    def _store(self,
-               name: str,
-               entry: LoggerContextConfig,
-               *,
-               notify: bool = True) -> None:
+    def _store(
+        self, name: str, entry: LoggerContextConfig, *, notify: bool = True
+    ) -> None:
         normalized_name = self._normalize_name(name)
         old_entry = self._entries.get(normalized_name)
         if old_entry is not None:
@@ -446,32 +495,36 @@ class ObjectLoggerContexts:
             raise LoggerConfigurationError("Logging context name cannot be empty.")
         return normalized_name
 
-    def _resolve(self,
-                 parent_contexts: Mapping[str, _ResolvedLoggerContextConfig],
-                 *,
-                 default_level: int,
-                 default_console_level: int,
-                 default_file_level: int,
-                 default_format: str,
-                 default_console_format: str,
-                 default_file_format: str,
-                 default_masking: bool,
-                 default_console_masking: bool,
-                 default_file_masking: bool) -> dict[str, _ResolvedLoggerContextConfig]:
+    def _resolve(
+        self,
+        parent_contexts: Mapping[str, _ResolvedLoggerContextConfig],
+        *,
+        default_level: int,
+        default_console_level: int,
+        default_file_level: int,
+        default_format: str,
+        default_console_format: str,
+        default_file_format: str,
+        default_masking: bool,
+        default_console_masking: bool,
+        default_file_masking: bool,
+    ) -> dict[str, _ResolvedLoggerContextConfig]:
         result = dict(parent_contexts)
         for name, entry in self._entries.items():
             parent = parent_contexts.get(name)
             if entry.status is LoggerContextStatus.DISABLED:
-                result[name] = _ResolvedLoggerContextConfig(disabled=True,
-                                                            level=logging.CRITICAL + 1,
-                                                            console_level=logging.CRITICAL + 1,
-                                                            file_level=logging.CRITICAL + 1,
-                                                            format=default_format,
-                                                            console_format=default_console_format,
-                                                            file_format=default_file_format,
-                                                            masking=default_masking,
-                                                            console_masking=default_console_masking,
-                                                            file_masking=default_file_masking)
+                result[name] = _ResolvedLoggerContextConfig(
+                    disabled=True,
+                    level=logging.CRITICAL + 1,
+                    console_level=logging.CRITICAL + 1,
+                    file_level=logging.CRITICAL + 1,
+                    format=default_format,
+                    console_format=default_console_format,
+                    file_format=default_file_format,
+                    masking=default_masking,
+                    console_masking=default_console_masking,
+                    file_masking=default_file_masking,
+                )
                 continue
             if entry.status is LoggerContextStatus.INHERIT:
                 if parent is None:
@@ -481,42 +534,115 @@ class ObjectLoggerContexts:
                 continue
 
             inherited_level = parent.level if parent is not None else default_level
-            inherited_console_level = parent.console_level if parent is not None else default_console_level
-            inherited_file_level = parent.file_level if parent is not None else default_file_level
+            inherited_console_level = (
+                parent.console_level if parent is not None else default_console_level
+            )
+            inherited_file_level = (
+                parent.file_level if parent is not None else default_file_level
+            )
             inherited_format = parent.format if parent is not None else default_format
-            inherited_console_format = parent.console_format if parent is not None else default_console_format
-            inherited_file_format = parent.file_format if parent is not None else default_file_format
-            inherited_masking = parent.masking if parent is not None else default_masking
-            inherited_console_masking = parent.console_masking if parent is not None else default_console_masking
-            inherited_file_masking = parent.file_masking if parent is not None else default_file_masking
+            inherited_console_format = (
+                parent.console_format if parent is not None else default_console_format
+            )
+            inherited_file_format = (
+                parent.file_format if parent is not None else default_file_format
+            )
+            inherited_masking = (
+                parent.masking if parent is not None else default_masking
+            )
+            inherited_console_masking = (
+                parent.console_masking
+                if parent is not None
+                else default_console_masking
+            )
+            inherited_file_masking = (
+                parent.file_masking if parent is not None else default_file_masking
+            )
 
-            level = inherited_level if entry.level is LoggerConfigValue.INHERIT else ObjectLoggerConfig._normalize_level(entry.level)
-            console_level = level if entry.console_level is LoggerConfigValue.AUTO else (
-                inherited_console_level if entry.console_level is LoggerConfigValue.INHERIT else ObjectLoggerConfig._normalize_level(entry.console_level))
-            file_level = level if entry.file_level is LoggerConfigValue.AUTO else (
-                inherited_file_level if entry.file_level is LoggerConfigValue.INHERIT else ObjectLoggerConfig._normalize_level(entry.file_level))
-            common_format = inherited_format if entry.format is LoggerConfigValue.INHERIT else entry.format
-            console_format = common_format if entry.console_format is LoggerConfigValue.AUTO else (
-                inherited_console_format if entry.console_format is LoggerConfigValue.INHERIT else entry.console_format)
-            file_format = common_format if entry.file_format in {LoggerConfigValue.AUTO,
-                                                                 LoggerConfigValue.INHERIT} and entry.format is not LoggerConfigValue.INHERIT else (
-                inherited_file_format if entry.file_format is LoggerConfigValue.INHERIT else entry.file_format)
-            masking = inherited_masking if entry.masking is LoggerConfigValue.INHERIT else bool(entry.masking)
-            console_masking = masking if entry.console_masking is LoggerConfigValue.AUTO else (
-                inherited_console_masking if entry.console_masking is LoggerConfigValue.INHERIT else bool(entry.console_masking))
-            file_masking = masking if entry.file_masking is LoggerConfigValue.AUTO else (
-                inherited_file_masking if entry.file_masking is LoggerConfigValue.INHERIT else bool(entry.file_masking))
+            level = (
+                inherited_level
+                if entry.level is LoggerConfigValue.INHERIT
+                else ObjectLoggerConfig._normalize_level(entry.level)
+            )
+            console_level = (
+                level
+                if entry.console_level is LoggerConfigValue.AUTO
+                else (
+                    inherited_console_level
+                    if entry.console_level is LoggerConfigValue.INHERIT
+                    else ObjectLoggerConfig._normalize_level(entry.console_level)
+                )
+            )
+            file_level = (
+                level
+                if entry.file_level is LoggerConfigValue.AUTO
+                else (
+                    inherited_file_level
+                    if entry.file_level is LoggerConfigValue.INHERIT
+                    else ObjectLoggerConfig._normalize_level(entry.file_level)
+                )
+            )
+            common_format = (
+                inherited_format
+                if entry.format is LoggerConfigValue.INHERIT
+                else entry.format
+            )
+            console_format = (
+                common_format
+                if entry.console_format is LoggerConfigValue.AUTO
+                else (
+                    inherited_console_format
+                    if entry.console_format is LoggerConfigValue.INHERIT
+                    else entry.console_format
+                )
+            )
+            file_format = (
+                common_format
+                if entry.file_format
+                in {LoggerConfigValue.AUTO, LoggerConfigValue.INHERIT}
+                and entry.format is not LoggerConfigValue.INHERIT
+                else (
+                    inherited_file_format
+                    if entry.file_format is LoggerConfigValue.INHERIT
+                    else entry.file_format
+                )
+            )
+            masking = (
+                inherited_masking
+                if entry.masking is LoggerConfigValue.INHERIT
+                else bool(entry.masking)
+            )
+            console_masking = (
+                masking
+                if entry.console_masking is LoggerConfigValue.AUTO
+                else (
+                    inherited_console_masking
+                    if entry.console_masking is LoggerConfigValue.INHERIT
+                    else bool(entry.console_masking)
+                )
+            )
+            file_masking = (
+                masking
+                if entry.file_masking is LoggerConfigValue.AUTO
+                else (
+                    inherited_file_masking
+                    if entry.file_masking is LoggerConfigValue.INHERIT
+                    else bool(entry.file_masking)
+                )
+            )
 
-            result[name] = _ResolvedLoggerContextConfig(disabled=False,
-                                                        level=level,
-                                                        console_level=console_level,
-                                                        file_level=file_level,
-                                                        format=common_format,
-                                                        console_format=console_format,
-                                                        file_format=file_format,
-                                                        masking=masking,
-                                                        console_masking=console_masking,
-                                                        file_masking=file_masking)
+            result[name] = _ResolvedLoggerContextConfig(
+                disabled=False,
+                level=level,
+                console_level=console_level,
+                file_level=file_level,
+                format=common_format,
+                console_format=console_format,
+                file_format=file_format,
+                masking=masking,
+                console_masking=console_masking,
+                file_masking=file_masking,
+            )
         return result
 
 
@@ -575,7 +701,9 @@ class ObjectLoggerConfig:
     level: int | str | None | LoggerConfigValue = LoggerConfigValue.INHERIT
     disabled: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
 
-    handler_factories: tuple[Callable[[], logging.Handler], ...] | LoggerConfigValue = LoggerConfigValue.INHERIT
+    handler_factories: tuple[Callable[[], logging.Handler], ...] | LoggerConfigValue = (
+        LoggerConfigValue.INHERIT
+    )
     formatter: logging.Formatter | None | LoggerConfigValue = LoggerConfigValue.INHERIT
     format: str | LoggerConfigValue = LoggerConfigValue.INHERIT
     show_time: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
@@ -608,16 +736,16 @@ class ObjectLoggerConfig:
     file_delay: bool | LoggerConfigValue = LoggerConfigValue.INHERIT
     file_archive_backup_count: int | LoggerConfigValue = LoggerConfigValue.INHERIT
 
-    contexts: ObjectLoggerContexts = dataclass_field(default_factory=ObjectLoggerContexts)
+    contexts: ObjectLoggerContexts = dataclass_field(
+        default_factory=ObjectLoggerContexts
+    )
 
-    _on_change: Callable[[], None] | None = dataclass_field(default=None,
-                                                            init=False,
-                                                            repr=False,
-                                                            compare=False)
-    _notifications_enabled: bool = dataclass_field(default=False,
-                                                   init=False,
-                                                   repr=False,
-                                                   compare=False)
+    _on_change: Callable[[], None] | None = dataclass_field(
+        default=None, init=False, repr=False, compare=False
+    )
+    _notifications_enabled: bool = dataclass_field(
+        default=False, init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         """
@@ -630,9 +758,7 @@ class ObjectLoggerConfig:
         self.contexts._bind(self._notify)
         object.__setattr__(self, "_notifications_enabled", True)
 
-    def __setattr__(self,
-                    key: str,
-                    value: Any) -> None:
+    def __setattr__(self, key: str, value: Any) -> None:
         """
         Validate and apply an attribute assignment.
 
@@ -645,8 +771,7 @@ class ObjectLoggerConfig:
         :return:
             Returns None.
         """
-        if (not key.startswith("_")
-                and getattr(self, "_notifications_enabled", False)):
+        if not key.startswith("_") and getattr(self, "_notifications_enabled", False):
             self._validate_field(key, value)
         old_contexts = getattr(self, "contexts", None) if key == "contexts" else None
         object.__setattr__(self, key, value)
@@ -671,8 +796,7 @@ class ObjectLoggerConfig:
         object.__setattr__(result, "_notifications_enabled", True)
         return result
 
-    def _bind(self,
-              on_change: Callable[[], None]) -> None:
+    def _bind(self, on_change: Callable[[], None]) -> None:
         """
         Execute the '_bind' operation.
 
@@ -706,8 +830,9 @@ class ObjectLoggerConfig:
         if callback is not None:
             callback()
 
-    def resolve(self,
-                parent_config: _ResolvedObjectLoggerConfig | None) -> _ResolvedObjectLoggerConfig:
+    def resolve(
+        self, parent_config: _ResolvedObjectLoggerConfig | None
+    ) -> _ResolvedObjectLoggerConfig:
         """
         Resolve local overrides against the inherited configuration.
 
@@ -728,21 +853,29 @@ class ObjectLoggerConfig:
             return getattr(defaults, name)
 
         resolved_parent = self.parent
-        resolved_propagate = (resolved_parent is not LoggerParent.NONE
-                              if self.propagate is LoggerConfigValue.INHERIT
-                              else self.propagate)
+        resolved_propagate = (
+            resolved_parent is not LoggerParent.NONE
+            if self.propagate is LoggerConfigValue.INHERIT
+            else self.propagate
+        )
         base_level_value = inherited("level")
-        base_level = self._normalize_level(base_level_value if base_level_value is not None else logging.NOTSET)
+        base_level = self._normalize_level(
+            base_level_value if base_level_value is not None else logging.NOTSET
+        )
 
         console_level_value = inherited("console_level")
         if self.console_level is LoggerConfigValue.AUTO:
             console_level_value = base_level
-        resolved_console_level = self._normalize_level(console_level_value if console_level_value is not None else base_level)
+        resolved_console_level = self._normalize_level(
+            console_level_value if console_level_value is not None else base_level
+        )
 
         file_level_value = inherited("file_level")
         if self.file_level is LoggerConfigValue.AUTO:
             file_level_value = base_level
-        resolved_file_level = self._normalize_level(file_level_value if file_level_value is not None else base_level)
+        resolved_file_level = self._normalize_level(
+            file_level_value if file_level_value is not None else base_level
+        )
 
         show_time = bool(inherited("show_time"))
         show_level = bool(inherited("show_level"))
@@ -769,30 +902,52 @@ class ObjectLoggerConfig:
             return " ".join(parts)
 
         common_format_value = inherited("format")
-        common_format = automatic_format("common") if common_format_value is LoggerConfigValue.AUTO else common_format_value
+        common_format = (
+            automatic_format("common")
+            if common_format_value is LoggerConfigValue.AUTO
+            else common_format_value
+        )
         console_value = inherited("console_format")
-        console_format = common_format if console_value is LoggerConfigValue.AUTO else console_value
+        console_format = (
+            common_format if console_value is LoggerConfigValue.AUTO else console_value
+        )
         file_value = inherited("file_format")
-        file_format = common_format if file_value is LoggerConfigValue.AUTO else file_value
+        file_format = (
+            common_format if file_value is LoggerConfigValue.AUTO else file_value
+        )
 
         resolved_masking = bool(inherited("masking"))
         console_masking_value = inherited("console_masking")
-        resolved_console_masking = resolved_masking if console_masking_value is LoggerConfigValue.AUTO else bool(console_masking_value)
+        resolved_console_masking = (
+            resolved_masking
+            if console_masking_value is LoggerConfigValue.AUTO
+            else bool(console_masking_value)
+        )
         file_masking_value = inherited("file_masking")
-        resolved_file_masking = resolved_masking if file_masking_value is LoggerConfigValue.AUTO else bool(file_masking_value)
+        resolved_file_masking = (
+            resolved_masking
+            if file_masking_value is LoggerConfigValue.AUTO
+            else bool(file_masking_value)
+        )
         custom_masking_value = inherited("custom_handler_masking")
-        resolved_custom_masking = resolved_masking if custom_masking_value is LoggerConfigValue.AUTO else bool(custom_masking_value)
+        resolved_custom_masking = (
+            resolved_masking
+            if custom_masking_value is LoggerConfigValue.AUTO
+            else bool(custom_masking_value)
+        )
 
-        resolved_contexts = self.contexts._resolve(parent_config.contexts if parent_config is not None else {},
-                                                   default_level=base_level,
-                                                   default_console_level=resolved_console_level,
-                                                   default_file_level=resolved_file_level,
-                                                   default_format=common_format,
-                                                   default_console_format=console_format,
-                                                   default_file_format=file_format,
-                                                   default_masking=resolved_masking,
-                                                   default_console_masking=resolved_console_masking,
-                                                   default_file_masking=resolved_file_masking)
+        resolved_contexts = self.contexts._resolve(
+            parent_config.contexts if parent_config is not None else {},
+            default_level=base_level,
+            default_console_level=resolved_console_level,
+            default_file_level=resolved_file_level,
+            default_format=common_format,
+            default_console_format=console_format,
+            default_file_format=file_format,
+            default_masking=resolved_masking,
+            default_console_masking=resolved_console_masking,
+            default_file_masking=resolved_file_masking,
+        )
         technical_levels = [base_level]
         if inherited("console"):
             technical_levels.append(resolved_console_level)
@@ -800,47 +955,49 @@ class ObjectLoggerConfig:
             technical_levels.append(resolved_file_level)
         for context in resolved_contexts.values():
             if not context.disabled:
-                technical_levels.extend((context.level,
-                                         context.console_level,
-                                         context.file_level))
+                technical_levels.extend(
+                    (context.level, context.console_level, context.file_level)
+                )
 
-        return _ResolvedObjectLoggerConfig(logger_class=inherited("logger_class"),
-                                           parent=resolved_parent,
-                                           propagate=resolved_propagate,
-                                           level=min(technical_levels),
-                                           default_level=base_level,
-                                           disabled=inherited("disabled"),
-                                           handler_factories=inherited("handler_factories"),
-                                           formatter=inherited("formatter"),
-                                           format=common_format,
-                                           show_time=show_time,
-                                           show_level=show_level,
-                                           show_name=show_name,
-                                           show_status=show_status,
-                                           show_context=show_context,
-                                           show_context_data=show_context_data,
-                                           masking=resolved_masking,
-                                           console_masking=resolved_console_masking,
-                                           file_masking=resolved_file_masking,
-                                           custom_handler_masking=resolved_custom_masking,
-                                           console=inherited("console"),
-                                           console_level=resolved_console_level,
-                                           console_format=console_format,
-                                           console_rich_show_time=inherited("console_rich_show_time"),
-                                           console_rich_markup=inherited("console_rich_markup"),
-                                           console_rich_show_level=inherited("console_rich_show_level"),
-                                           console_rich_show_path=inherited("console_rich_show_path"),
-                                           file=inherited("file"),
-                                           file_path=inherited("file_path"),
-                                           file_mode=inherited("file_mode"),
-                                           file_level=resolved_file_level,
-                                           file_format=file_format,
-                                           file_max_bytes=inherited("file_max_bytes"),
-                                           file_backup_count=inherited("file_backup_count"),
-                                           file_encoding=inherited("file_encoding"),
-                                           file_delay=inherited("file_delay"),
-                                           file_archive_backup_count=inherited("file_archive_backup_count"),
-                                           contexts=resolved_contexts)
+        return _ResolvedObjectLoggerConfig(
+            logger_class=inherited("logger_class"),
+            parent=resolved_parent,
+            propagate=resolved_propagate,
+            level=min(technical_levels),
+            default_level=base_level,
+            disabled=inherited("disabled"),
+            handler_factories=inherited("handler_factories"),
+            formatter=inherited("formatter"),
+            format=common_format,
+            show_time=show_time,
+            show_level=show_level,
+            show_name=show_name,
+            show_status=show_status,
+            show_context=show_context,
+            show_context_data=show_context_data,
+            masking=resolved_masking,
+            console_masking=resolved_console_masking,
+            file_masking=resolved_file_masking,
+            custom_handler_masking=resolved_custom_masking,
+            console=inherited("console"),
+            console_level=resolved_console_level,
+            console_format=console_format,
+            console_rich_show_time=inherited("console_rich_show_time"),
+            console_rich_markup=inherited("console_rich_markup"),
+            console_rich_show_level=inherited("console_rich_show_level"),
+            console_rich_show_path=inherited("console_rich_show_path"),
+            file=inherited("file"),
+            file_path=inherited("file_path"),
+            file_mode=inherited("file_mode"),
+            file_level=resolved_file_level,
+            file_format=file_format,
+            file_max_bytes=inherited("file_max_bytes"),
+            file_backup_count=inherited("file_backup_count"),
+            file_encoding=inherited("file_encoding"),
+            file_delay=inherited("file_delay"),
+            file_archive_backup_count=inherited("file_archive_backup_count"),
+            contexts=resolved_contexts,
+        )
 
     @staticmethod
     def _framework_defaults() -> _ResolvedObjectLoggerConfig:
@@ -853,43 +1010,45 @@ class ObjectLoggerConfig:
 
         from admin_helper.objects.logger import ObjectLogger
 
-        return _ResolvedObjectLoggerConfig(logger_class=ObjectLogger,
-                                           parent=LoggerParent.OBJECT_PARENT,
-                                           propagate=True,
-                                           level=logging.NOTSET,
-                                           default_level=logging.NOTSET,
-                                           disabled=False,
-                                           handler_factories=(),
-                                           formatter=None,
-                                           format="%(message)s",
-                                           show_time=True,
-                                           show_level=True,
-                                           show_name=True,
-                                           show_status=True,
-                                           show_context=True,
-                                           show_context_data=True,
-                                           masking=True,
-                                           console_masking=True,
-                                           file_masking=True,
-                                           custom_handler_masking=True,
-                                           console=False,
-                                           console_level=logging.NOTSET,
-                                           console_format="[%(object_status)s] [%(log_context)s] %(message)s",
-                                           console_rich_show_time=True,
-                                           console_rich_markup=True,
-                                           console_rich_show_level=True,
-                                           console_rich_show_path=False,
-                                           file=False,
-                                           file_path="logs/{name}.log",
-                                           file_mode="a",
-                                           file_level=logging.NOTSET,
-                                           file_format="%(asctime)s [%(levelname)s] [%(object_status)s] [%(log_context)s] %(name)s: %(message)s | %(log_context_data)s",
-                                           file_max_bytes=0,
-                                           file_backup_count=0,
-                                           file_encoding="utf-8",
-                                           file_delay=False,
-                                           file_archive_backup_count=0,
-                                           contexts={})
+        return _ResolvedObjectLoggerConfig(
+            logger_class=ObjectLogger,
+            parent=LoggerParent.OBJECT_PARENT,
+            propagate=True,
+            level=logging.NOTSET,
+            default_level=logging.NOTSET,
+            disabled=False,
+            handler_factories=(),
+            formatter=None,
+            format="%(message)s",
+            show_time=True,
+            show_level=True,
+            show_name=True,
+            show_status=True,
+            show_context=True,
+            show_context_data=True,
+            masking=True,
+            console_masking=True,
+            file_masking=True,
+            custom_handler_masking=True,
+            console=False,
+            console_level=logging.NOTSET,
+            console_format="[%(object_status)s] [%(log_context)s] %(message)s",
+            console_rich_show_time=True,
+            console_rich_markup=True,
+            console_rich_show_level=True,
+            console_rich_show_path=False,
+            file=False,
+            file_path="logs/{name}.log",
+            file_mode="a",
+            file_level=logging.NOTSET,
+            file_format="%(asctime)s [%(levelname)s] [%(object_status)s] [%(log_context)s] %(name)s: %(message)s | %(log_context_data)s",
+            file_max_bytes=0,
+            file_backup_count=0,
+            file_encoding="utf-8",
+            file_delay=False,
+            file_archive_backup_count=0,
+            contexts={},
+        )
 
     @staticmethod
     def _normalize_level(value: int | str) -> int:
@@ -921,8 +1080,7 @@ class ObjectLoggerConfig:
                 self._validate_field(name, getattr(self, name))
 
     @staticmethod
-    def _validate_field(name: str,
-                        value: Any) -> None:
+    def _validate_field(name: str, value: Any) -> None:
         """
         Execute the '_validate_field' operation.
 
@@ -940,44 +1098,99 @@ class ObjectLoggerConfig:
 
         if value is LoggerConfigValue.INHERIT:
             if name == "parent":
-                raise LoggerConfigurationError("parent cannot use LoggerConfigValue.INHERIT.")
+                raise LoggerConfigurationError(
+                    "parent cannot use LoggerConfigValue.INHERIT."
+                )
             return
         if value is LoggerConfigValue.AUTO:
-            if name not in {"format", "console_level", "file_level", "console_format", "file_format",
-                            "console_masking", "file_masking", "custom_handler_masking"}:
-                raise LoggerConfigurationError(f"{name} cannot use LoggerConfigValue.AUTO.")
+            if name not in {
+                "format",
+                "console_level",
+                "file_level",
+                "console_format",
+                "file_format",
+                "console_masking",
+                "file_masking",
+                "custom_handler_masking",
+            }:
+                raise LoggerConfigurationError(
+                    f"{name} cannot use LoggerConfigValue.AUTO."
+                )
             return
         if name == "logger_class":
             if not isinstance(value, type) or not issubclass(value, ObjectLogger):
-                raise LoggerConfigurationError(f"logger_class must inherit from {ObjectLogger.__name__}, got {value!r}.")
+                raise LoggerConfigurationError(
+                    f"logger_class must inherit from {ObjectLogger.__name__}, got {value!r}."
+                )
             return
         if name == "parent":
             if not isinstance(value, (LoggerParent, str)):
-                raise LoggerConfigurationError("parent must be LoggerParent or a logger-name string.")
+                raise LoggerConfigurationError(
+                    "parent must be LoggerParent or a logger-name string."
+                )
             if isinstance(value, str) and not value.strip():
                 raise LoggerConfigurationError("parent logger name cannot be empty.")
             return
         if name == "contexts":
             if not isinstance(value, ObjectLoggerContexts):
-                raise LoggerConfigurationError("contexts must be an ObjectLoggerContexts instance.")
+                raise LoggerConfigurationError(
+                    "contexts must be an ObjectLoggerContexts instance."
+                )
             return
-        boolean_fields = {"propagate", "disabled", "show_time", "show_level", "show_name",
-                          "show_status", "show_context", "show_context_data", "masking",
-                          "console_masking", "file_masking", "custom_handler_masking",
-                          "console", "console_rich_show_time",
-                          "console_rich_markup", "console_rich_show_level", "console_rich_show_path",
-                          "file", "file_delay"}
+        boolean_fields = {
+            "propagate",
+            "disabled",
+            "show_time",
+            "show_level",
+            "show_name",
+            "show_status",
+            "show_context",
+            "show_context_data",
+            "masking",
+            "console_masking",
+            "file_masking",
+            "custom_handler_masking",
+            "console",
+            "console_rich_show_time",
+            "console_rich_markup",
+            "console_rich_show_level",
+            "console_rich_show_path",
+            "file",
+            "file_delay",
+        }
         if name in boolean_fields and not isinstance(value, bool):
-            raise LoggerConfigurationError(f"{name} must be bool or LoggerConfigValue.INHERIT.")
-        integer_fields = {"file_max_bytes", "file_backup_count", "file_archive_backup_count"}
+            raise LoggerConfigurationError(
+                f"{name} must be bool or LoggerConfigValue.INHERIT."
+            )
+        integer_fields = {
+            "file_max_bytes",
+            "file_backup_count",
+            "file_archive_backup_count",
+        }
         if name in integer_fields and (not isinstance(value, int) or value < 0):
-            raise LoggerConfigurationError(f"{name} must be a non-negative integer or LoggerConfigValue.INHERIT.")
+            raise LoggerConfigurationError(
+                f"{name} must be a non-negative integer or LoggerConfigValue.INHERIT."
+            )
         if name == "handler_factories":
-            if not isinstance(value, tuple) or not all(callable(factory) for factory in value):
-                raise LoggerConfigurationError("handler_factories must be a tuple of callables.")
-        if name == "formatter" and value is not None and not isinstance(value, logging.Formatter):
-            raise LoggerConfigurationError("formatter must be logging.Formatter, None, or INHERIT.")
+            if not isinstance(value, tuple) or not all(
+                callable(factory) for factory in value
+            ):
+                raise LoggerConfigurationError(
+                    "handler_factories must be a tuple of callables."
+                )
+        if (
+            name == "formatter"
+            and value is not None
+            and not isinstance(value, logging.Formatter)
+        ):
+            raise LoggerConfigurationError(
+                "formatter must be logging.Formatter, None, or INHERIT."
+            )
         if name in {"level", "console_level", "file_level"} and value is not None:
             ObjectLoggerConfig._normalize_level(value)
-        if name in {"format", "console_format", "file_format"} and not isinstance(value, str):
-            raise LoggerConfigurationError(f"{name} must be str or LoggerConfigValue.INHERIT.")
+        if name in {"format", "console_format", "file_format"} and not isinstance(
+            value, str
+        ):
+            raise LoggerConfigurationError(
+                f"{name} must be str or LoggerConfigValue.INHERIT."
+            )

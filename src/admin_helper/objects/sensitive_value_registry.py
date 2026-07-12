@@ -7,7 +7,10 @@ from collections.abc import Iterable
 from typing import Any, TYPE_CHECKING
 
 from admin_helper.objects.config import SensitiveValueFilterMode
-from admin_helper.objects.helper import _field_framework_config, _masking_framework_config
+from admin_helper.objects.helper import (
+    _field_framework_config,
+    _masking_framework_config,
+)
 
 if TYPE_CHECKING:
     from admin_helper.objects import BaseObject
@@ -34,25 +37,27 @@ class _SensitiveValueRegistry:
         with self._lock:
             self._values.clear()
 
-    def rebuild(self, objects: Iterable[BaseObject], mode: SensitiveValueFilterMode) -> None:
+    def rebuild(
+        self, objects: Iterable[BaseObject], mode: SensitiveValueFilterMode
+    ) -> None:
         """Rebuild cached values from the supplied object snapshot."""
 
         self.clear()
         if mode is SensitiveValueFilterMode.DISABLED:
             return
         for obj in objects:
-            obj._register_masked_fields(include_computed=mode is SensitiveValueFilterMode.FIELDS_AND_COMPUTED)
+            obj._register_masked_fields(
+                include_computed=mode is SensitiveValueFilterMode.FIELDS_AND_COMPUTED
+            )
 
-    def register(self,
-                 value: Any) -> None:
+    def register(self, value: Any) -> None:
         token = self._token(value)
         if token is None:
             return
         with self._lock:
             self._values[token] += 1
 
-    def unregister(self,
-                   value: Any) -> None:
+    def unregister(self, value: Any) -> None:
         token = self._token(value)
         if token is None:
             return
@@ -63,19 +68,22 @@ class _SensitiveValueRegistry:
             else:
                 self._values[token] = count - 1
 
-    def redact_text(self,
-                    value: str) -> str:
+    def redact_text(self, value: str) -> str:
         with self._lock:
-            tokens = sorted((token for token in self._values if len(token) >= 4),
-                            key=len,
-                            reverse=True)
+            tokens = sorted(
+                (token for token in self._values if len(token) >= 4),
+                key=len,
+                reverse=True,
+            )
         for token in tokens:
             value = value.replace(token, _field_framework_config().masked_value)
         return value
 
-    def sanitize(self,
-                 value: Any) -> Any:
-        if _masking_framework_config().mode is SensitiveValueFilterMode.DISABLED or not _masking_framework_config().enabled:
+    def sanitize(self, value: Any) -> Any:
+        if (
+            _masking_framework_config().mode is SensitiveValueFilterMode.DISABLED
+            or not _masking_framework_config().enabled
+        ):
             return value
         with self._lock:
             tokens = set(self._values)
@@ -93,7 +101,9 @@ class _SensitiveValueRegistry:
         if isinstance(value, list):
             return [self.sanitize(item) for item in value]
         if isinstance(value, dict):
-            return {self.sanitize(key): self.sanitize(item) for key, item in value.items()}
+            return {
+                self.sanitize(key): self.sanitize(item) for key, item in value.items()
+            }
         if str(value) in tokens:
             return _field_framework_config().masked_value
         return value
