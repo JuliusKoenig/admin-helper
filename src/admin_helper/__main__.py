@@ -7,10 +7,11 @@ from typing import Any
 
 from rich.logging import RichHandler
 
+from admin_helper.config import LoggerConfigValue, ObjectLoggerContexts, LoggerContextConfig
 from admin_helper.console import AdminHelperConsole
 from admin_helper.field import field, computed_field, fields
-from admin_helper.objects import ObjectLogger, _MaskedValueFilter, register, ObjectLoggerConfig, LoggerParent, LoggerConfigValue, ObjectLoggerContexts, \
-    LoggerContextConfig, BaseObject, object_registry
+from admin_helper.logger import _MaskedValueFilter
+from admin_helper.objects import ObjectLogger, register, ObjectLoggerConfig, LoggerParent, BaseObject, object_registry
 
 
 # Registration messages are emitted before object instances and their handlers

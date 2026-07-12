@@ -6,6 +6,18 @@ from typing import Iterable, Any, Callable, Mapping, get_type_hints
 from admin_helper.warnings import FieldConfigurationWarning
 
 FIELD_INFO_METADATA_KEY = "field_info"
+DEFAULT_MASKED_FIELD_VALUE = "<MASKED>"
+DEFAULT_NOT_SET_FIELD_VALUE = "<NOT SET>"
+DEFAULT_EMPTY_FIELD_VALUES: tuple[Any, ...] = (
+    None,
+    "",
+    b"",
+    (),
+    [],
+    {},
+    set(),
+    frozenset(),
+)
 
 
 @dataclass(frozen=True, slots=True)
