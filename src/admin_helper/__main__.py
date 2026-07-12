@@ -8,8 +8,9 @@ from typing import Any
 from rich.logging import RichHandler
 
 from admin_helper.console import AdminHelperConsole
+from admin_helper.field import field, computed_field, fields
 from admin_helper.objects import ObjectLogger, _MaskedValueFilter, register, ObjectLoggerConfig, LoggerParent, LoggerConfigValue, ObjectLoggerContexts, \
-    LoggerContextConfig, BaseObject, field, computed_field, object_registry, get_fields
+    LoggerContextConfig, BaseObject, object_registry
 
 
 # Registration messages are emitted before object instances and their handlers
@@ -247,8 +248,8 @@ if __name__ == "__main__":
     print(worker)
 
     # Query stored and computed fields through one interface.
-    print(get_fields(database, display=True))
-    print(get_fields(DatabaseService, masked=True))
+    print(fields(database, display=True))
+    print(fields(DatabaseService, masked=True))
 
     # ``endpoint`` is an automatically created property. The masked computed
     # field keeps explicit call semantics because ``as_property=False``.
