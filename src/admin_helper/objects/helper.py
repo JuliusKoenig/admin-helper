@@ -35,14 +35,28 @@ def _format_log_value(value: Any) -> str:
     return str(value)
 
 
+_bootstrap_field_config = FieldFrameworkConfig()
+_bootstrap_masking_config = MaskingFrameworkConfig()
+_registry_config: ObjectRegistryConfig | None = None
+
+
+def _bind_registry_config(config: ObjectRegistryConfig) -> None:
+    """Bind helpers to the configuration owned by the active registry."""
+
+    global _registry_config
+    _registry_config = config
+
+
 def _field_framework_config() -> FieldFrameworkConfig:
-    registry = globals().get("object_registry")
-    return registry.config.fields if registry is not None else FieldFrameworkConfig()
+    if _registry_config is None:
+        return _bootstrap_field_config
+    return _registry_config.fields
 
 
 def _masking_framework_config() -> MaskingFrameworkConfig:
-    registry = globals().get("object_registry")
-    return registry.config.logging.masking if registry is not None else MaskingFrameworkConfig()
+    if _registry_config is None:
+        return _bootstrap_masking_config
+    return _registry_config.logging.masking
 
 
 def _values_equal(value: Any,

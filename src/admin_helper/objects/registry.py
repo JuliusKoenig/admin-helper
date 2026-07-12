@@ -19,7 +19,12 @@ from admin_helper.exceptions import (AmbiguousObjectNameError,
 from admin_helper.objects.config import ObjectRegistryConfig, RegistryConfigChange, LoggerParent, ObjectLoggerConfig, ObjectStatus
 from admin_helper.objects.field import _field_info
 from admin_helper.objects.logger import _get_object_logger, ObjectLogger
-from admin_helper.objects.sensitive_value_registry import _SensitiveValueRegistry, _sensitive_value_registry
+from admin_helper.objects.helper import _bind_registry_config
+from admin_helper.objects.sensitive_value_registry import (
+    _SensitiveValueRegistry,
+    _bind_sensitive_value_registry,
+    _sensitive_value_registry,
+)
 
 if TYPE_CHECKING:
     from admin_helper.objects.object import BaseObject
@@ -970,7 +975,7 @@ class _ObjectRegistry:
             Returns an immutable tuple containing the requested values.
         """
 
-        return cast(tuple[_ObjectRegistration, ...], cast(object, tuple(self._registrations_by_name.values())))
+        return tuple(self._registrations_by_name.values())
 
     def instances(self) -> tuple[BaseObject, ...]:
         """
@@ -980,7 +985,7 @@ class _ObjectRegistry:
             Returns an immutable tuple containing the requested values.
         """
 
-        return cast(tuple[BaseObject, ...], cast(object, tuple(self._instances_by_name.values())))
+        return tuple(self._instances_by_name.values())
 
     def root_objects(self) -> tuple[BaseObject, ...]:
         """
@@ -1195,3 +1200,5 @@ class _ObjectRegistry:
 # The singleton is the supported entry point for lookups. Creating additional
 # registry instances is intentionally not part of the public API.
 object_registry = _ObjectRegistry()
+_bind_registry_config(object_registry.config)
+_bind_sensitive_value_registry(object_registry._sensitive_values)

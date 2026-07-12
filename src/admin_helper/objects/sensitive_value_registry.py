@@ -99,17 +99,16 @@ class _SensitiveValueRegistry:
         return value
 
 
-def _sensitive_value_registry() -> _SensitiveValueRegistry:
-    registry = globals().get("object_registry")
-    return registry._sensitive_values if registry is not None else _bootstrap_sensitive_values
-
-
-def refresh_sensitive_values() -> None:
-    """Rebuild the registry-owned sensitive-value cache immediately."""
-
-    registry = globals().get("object_registry")
-    if registry is not None:
-        registry._sensitive_values.rebuild(registry.instances(), registry.config.logging.masking.mode)
-
-
 _bootstrap_sensitive_values = _SensitiveValueRegistry()
+_active_sensitive_values = _bootstrap_sensitive_values
+
+
+def _bind_sensitive_value_registry(registry: _SensitiveValueRegistry) -> None:
+    """Bind logging and object helpers to the registry-owned cache."""
+
+    global _active_sensitive_values
+    _active_sensitive_values = registry
+
+
+def _sensitive_value_registry() -> _SensitiveValueRegistry:
+    return _active_sensitive_values
