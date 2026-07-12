@@ -7,12 +7,12 @@ from typing import Any
 
 from rich.logging import RichHandler
 
-from admin_helper.config import LoggerConfigValue, ObjectLoggerContexts, LoggerContextConfig
 from admin_helper.console import AdminHelperConsole
-from admin_helper.field import field, computed_field, fields
-from admin_helper.helper import register
-from admin_helper.logger import _MaskedValueFilter
-from admin_helper.objects import ObjectLogger, ObjectLoggerConfig, LoggerParent, BaseObject, object_registry
+from admin_helper.objects.config import LoggerConfigValue, ObjectLoggerContexts, LoggerContextConfig
+from admin_helper.objects.field import field, computed_field, fields
+from admin_helper.objects.helper import register
+from admin_helper.objects.logger import MaskedValueFilter, Formatter
+from admin_helper.objects.object import ObjectLogger, ObjectLoggerConfig, LoggerParent, BaseObject, object_registry
 
 
 # Registration messages are emitted before object instances and their handlers
@@ -42,8 +42,8 @@ def _configure_example_bootstrap_logging() -> None:
                                   show_path=False)
     console_handler.set_name("example-bootstrap-console")
     console_handler.setLevel(logging.DEBUG)
-    console_handler.setFormatter(ObjectLogger.Formatter("%(message)s"))
-    console_handler.addFilter(_MaskedValueFilter(None, "console"))
+    console_handler.setFormatter(Formatter("%(message)s"))
+    console_handler.addFilter(MaskedValueFilter(None, "console"))
     root_logger.addHandler(console_handler)
 
 

@@ -22,7 +22,7 @@ from admin_helper.objects.logger import _get_object_logger, ObjectLogger
 from admin_helper.objects.sensitive_value_registry import _SensitiveValueRegistry, _sensitive_value_registry
 
 if TYPE_CHECKING:
-    from admin_helper.objects import BaseObject
+    from admin_helper.objects.object import BaseObject
 
 _T = TypeVar("_T", bound="BaseObject")
 
@@ -295,7 +295,7 @@ class _ObjectRegistry:
             Returns a value of type ``BaseObject``.
         """
 
-        from admin_helper.objects import BaseObject
+        from admin_helper.objects.object import BaseObject
 
 
         if registration.abstract:
@@ -404,7 +404,7 @@ class _ObjectRegistry:
             Returns None.
         """
 
-        from admin_helper.objects import BaseObject
+        from admin_helper.objects.object import BaseObject
 
         # Collect first so the error can report every forgotten subclass in a
         # single diagnostic instead of failing one class at a time.
@@ -472,7 +472,7 @@ class _ObjectRegistry:
             Returns an immutable tuple containing the requested values.
         """
 
-        from admin_helper.objects import BaseObject
+        from admin_helper.objects.object import BaseObject
 
         result: list[type[BaseObject]] = []
         visited: set[type[BaseObject]] = set()
@@ -502,7 +502,7 @@ class _ObjectRegistry:
             Returns a value of type ``_ObjectRegistration | None``.
         """
 
-        from admin_helper.objects import BaseObject
+        from admin_helper.objects.object import BaseObject
 
         # Parent references are definition-level values and intentionally do
         # not depend on whether any object has already been instantiated.
