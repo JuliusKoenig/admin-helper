@@ -1,8 +1,8 @@
-.PHONY: test coverage lint format typecheck demo run clean
+.PHONY: all check test coverage lint format_check format typecheck demo run clean
 
 all: check
 
-check: test coverage lint format_check typecheck
+check: coverage lint format_check typecheck
 
 test:
 	uv run pytest
@@ -14,7 +14,7 @@ lint:
 	uv run ruff check .
 
 format_check:
-	uv run ruff format --diff .
+	uv run ruff format --check --diff .
 
 format:
 	uv run ruff format .
