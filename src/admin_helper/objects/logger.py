@@ -89,12 +89,20 @@ class MaskedValueFilter(logging.Filter):
         record.msg = _sensitive_value_registry().sanitize(record.msg)
         record.args = _sensitive_value_registry().sanitize(record.args)
         if hasattr(record, "log_context_data"):
-            record.log_context_data = _sensitive_value_registry().sanitize(
-                record.log_context_data
+            setattr(
+                record,
+                "log_context_data",
+                _sensitive_value_registry().sanitize(
+                    getattr(record, "log_context_data")
+                ),
             )
         if hasattr(record, "log_context_values"):
-            record.log_context_values = _sensitive_value_registry().sanitize(
-                record.log_context_values
+            setattr(
+                record,
+                "log_context_values",
+                _sensitive_value_registry().sanitize(
+                    getattr(record, "log_context_values")
+                ),
             )
         return True
 

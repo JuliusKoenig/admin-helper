@@ -531,7 +531,7 @@ class _ObjectRegistry:
             visit(registration)
 
     @staticmethod
-    def _all_subclasses(cls: type[BaseObject]) -> tuple[type[BaseObject], ...]:
+    def _all_subclasses(root_cls: type[BaseObject]) -> tuple[type[BaseObject], ...]:
         """
         Return every direct and indirect subclass of ``BaseObject``.  Python's ``__subclasses__`` typing is not precise enough for some static type checkers, therefore the runtime list is deliberately cast to ``list[type[BaseObject]]`` before traversal.
 
@@ -555,7 +555,7 @@ class _ObjectRegistry:
                 result.append(subclass)
                 collect(subclass)
 
-        collect(cls)
+        collect(root_cls)
 
         return tuple(result)
 

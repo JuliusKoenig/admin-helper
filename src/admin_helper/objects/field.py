@@ -4,7 +4,7 @@ from dataclasses import (
     field as dataclass_field,
     fields as dataclass_fields,
     Field,
-    MISSING,
+    MISSING, _MISSING_TYPE,
 )
 from enum import Enum
 from typing import Iterable, Any, Callable, Mapping, get_type_hints
@@ -105,15 +105,13 @@ class ObjectFieldDefinition:
         return value
 
 
-_UNSET = object()
-
 
 def field(
     default: Any = MISSING,
     default_factory: Any = MISSING,
-    init: bool | object = _UNSET,
-    repr: bool | object = _UNSET,
-    compare: bool | object = _UNSET,
+    init: bool | _MISSING_TYPE = MISSING,
+    repr: bool | _MISSING_TYPE = MISSING,
+    compare: bool | _MISSING_TYPE = MISSING,
     hash: bool | None = None,
     kw_only: bool | Any = MISSING,
     read_only: bool = False,
@@ -124,7 +122,7 @@ def field(
     description: str | None = None,
     empty_values: Iterable[Any] = (),
     metadata: Mapping[str, Any] | None = None,
-) -> Field[Any]:
+) -> Any:
     """
     Define a framework-aware dataclass field.
 
@@ -194,24 +192,24 @@ def field(
     if default is not MISSING and default_factory is not MISSING:
         raise ValueError("default and default_factory cannot be used together.")
 
-    resolved_init = True if init is _UNSET else bool(init)
-    resolved_repr = True if repr is _UNSET else bool(repr)
-    resolved_compare = True if compare is _UNSET else bool(compare)
+    resolved_init = True if init is MISSING else bool(init)
+    resolved_repr = True if repr is MISSING else bool(repr)
+    resolved_compare = True if compare is MISSING else bool(compare)
 
     if internal:
-        if init is not _UNSET and resolved_init:
+        if init is not MISSING and resolved_init:
             warnings.warn(
                 "Internal fields cannot be constructor parameters; init=True was ignored.",
                 FieldConfigurationWarning,
                 stacklevel=3,
             )
-        if repr is not _UNSET and resolved_repr:
+        if repr is not MISSING and resolved_repr:
             warnings.warn(
                 "Internal fields cannot appear in repr; repr=True was ignored.",
                 FieldConfigurationWarning,
                 stacklevel=3,
             )
-        if compare is not _UNSET and resolved_compare:
+        if compare is not MISSING and resolved_compare:
             warnings.warn(
                 "Internal fields do not participate in comparisons; compare=True was ignored.",
                 FieldConfigurationWarning,
@@ -227,9 +225,10 @@ def field(
         resolved_repr = False
         resolved_compare = False
         display = False
+        resolved_kw_only = True
 
     if masked and resolved_repr:
-        if repr is not _UNSET:
+        if repr is not MISSING:
             warnings.warn(
                 "Masked fields cannot appear in the dataclass repr; repr=True was ignored.",
                 FieldConfigurationWarning,

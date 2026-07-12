@@ -13,7 +13,7 @@ from admin_helper.objects.helper import (
 )
 
 if TYPE_CHECKING:
-    from admin_helper.objects import BaseObject
+    from admin_helper.objects.object import BaseObject
 
 
 class _SensitiveValueRegistry:

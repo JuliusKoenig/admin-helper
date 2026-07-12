@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field as dataclass_field, replace
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Any, Iterator, Mapping, TYPE_CHECKING
+from typing import Callable, Any, Iterator, Mapping, TYPE_CHECKING, cast
 
 from admin_helper.exceptions import LoggerConfigurationError
 from admin_helper.objects.field import (
@@ -562,7 +562,7 @@ class ObjectLoggerContexts:
             level = (
                 inherited_level
                 if entry.level is LoggerConfigValue.INHERIT
-                else ObjectLoggerConfig._normalize_level(entry.level)
+                else ObjectLoggerConfig._normalize_level(cast(int | str, entry.level))
             )
             console_level = (
                 level
@@ -636,9 +636,9 @@ class ObjectLoggerContexts:
                 level=level,
                 console_level=console_level,
                 file_level=file_level,
-                format=common_format,
-                console_format=console_format,
-                file_format=file_format,
+                format=cast(str, common_format),
+                console_format=cast(str, console_format),
+                file_format=cast(str, file_format),
                 masking=masking,
                 console_masking=console_masking,
                 file_masking=file_masking,
@@ -962,13 +962,13 @@ class ObjectLoggerConfig:
         return _ResolvedObjectLoggerConfig(
             logger_class=inherited("logger_class"),
             parent=resolved_parent,
-            propagate=resolved_propagate,
+            propagate=cast(bool, resolved_propagate),
             level=min(technical_levels),
             default_level=base_level,
             disabled=inherited("disabled"),
             handler_factories=inherited("handler_factories"),
             formatter=inherited("formatter"),
-            format=common_format,
+            format=cast(str, common_format),
             show_time=show_time,
             show_level=show_level,
             show_name=show_name,
@@ -1187,7 +1187,7 @@ class ObjectLoggerConfig:
                 "formatter must be logging.Formatter, None, or INHERIT."
             )
         if name in {"level", "console_level", "file_level"} and value is not None:
-            ObjectLoggerConfig._normalize_level(value)
+            ObjectLoggerConfig._normalize_level(cast(int | str, value))
         if name in {"format", "console_format", "file_format"} and not isinstance(
             value, str
         ):

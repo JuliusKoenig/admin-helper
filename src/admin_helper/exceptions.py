@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from admin_helper.objects import BaseObject
+    from admin_helper.objects.object import BaseObject
 
 
 # ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@ from typing import (
     Mapping,
     dataclass_transform,
 )
-from dataclasses import fields as dataclass_fields, dataclass, field as dataclass_field
+from dataclasses import fields as dataclass_fields, dataclass as dataclass_dataclass
 
 from admin_helper.objects.config import (
     FieldFrameworkConfig,
@@ -86,7 +86,7 @@ def _masked_value_is_set(value: Any, empty_values: Iterable[Any] = ()) -> bool:
 
 
 def _format_display_value(
-    value: Any, *, masked: bool = False, empty_values: Iterable[Any] = ()
+        value: Any, *, masked: bool = False, empty_values: Iterable[Any] = ()
 ) -> str:
     if masked:
         return (
@@ -137,7 +137,7 @@ def _validate_framework_field_names(cls: type["BaseObject"]) -> None:
 
     for _dataclass_field in dataclass_fields(cls):
         if _field_info(
-            _dataclass_field
+                _dataclass_field
         ).internal and not _dataclass_field.name.startswith("_"):
             raise TypeError(
                 f"Internal field '{_dataclass_field.name}' on "
@@ -145,15 +145,23 @@ def _validate_framework_field_names(cls: type["BaseObject"]) -> None:
             )
 
 
+_TClass = TypeVar("_TClass", bound=type)
+
+
+@dataclass_transform(field_specifiers=(field,))
+def dataclass(cls: _TClass) -> _TClass:
+    return dataclass_dataclass(cls)
+
+
 _T = TypeVar("_T", bound="BaseObject")
 
 
 @overload
 def register(
-    *,
-    abstract: Literal[True],
-    name: str | None = None,
-    parent: "_ParentReference" = None,
+        *,
+        abstract: Literal[True],
+        name: str | None = None,
+        parent: "_ParentReference" = None,
 ) -> Callable[[type[_T]], type[_T]]:
     """
     Transform and register a ``BaseObject`` subclass as a dataclass.  Abstract registrations define reusable templates and are never instantiated. Concrete registrations may store constructor arguments and an optional parent reference. Actual construction is delayed until ``instantiate_all`` runs.
@@ -181,12 +189,12 @@ def register(
 
 @overload
 def register(
-    *,
-    abstract: Literal[False] = False,
-    name: str | None = None,
-    parent: "_ParentReference" = None,
-    args: tuple[Any, ...] = (),
-    kwargs: Mapping[str, Any] | None = None,
+        *,
+        abstract: Literal[False] = False,
+        name: str | None = None,
+        parent: "_ParentReference" = None,
+        args: tuple[Any, ...] = (),
+        kwargs: Mapping[str, Any] | None = None,
 ) -> Callable[[type[_T]], type[_T]]:
     """
     Transform and register a ``BaseObject`` subclass as a dataclass.  Abstract registrations define reusable templates and are never instantiated. Concrete registrations may store constructor arguments and an optional parent reference. Actual construction is delayed until ``instantiate_all`` runs.
@@ -218,14 +226,14 @@ def register(
     ...
 
 
-@dataclass_transform(field_specifiers=(field, dataclass_field))
+@dataclass_transform(field_specifiers=(field,))
 def register(
-    *,
-    abstract: bool = False,
-    name: str | None = None,
-    parent: "_ParentReference" = None,
-    args: tuple[Any, ...] = (),
-    kwargs: Mapping[str, Any] | None = None,
+        *,
+        abstract: bool = False,
+        name: str | None = None,
+        parent: "_ParentReference" = None,
+        args: tuple[Any, ...] = (),
+        kwargs: Mapping[str, Any] | None = None,
 ) -> Callable[[type[_T]], type[_T]]:
     """
     Transform and register a ``BaseObject`` subclass as a dataclass.  Abstract registrations define reusable templates and are never instantiated. Concrete registrations may store constructor arguments and an optional parent reference. Actual construction is delayed until ``instantiate_all`` runs.
