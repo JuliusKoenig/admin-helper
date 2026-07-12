@@ -3,7 +3,11 @@ from enum import Enum
 from typing import Any, Iterable, TYPE_CHECKING, Union, overload, Literal, Callable, TypeVar, Mapping, dataclass_transform
 from dataclasses import fields as dataclass_fields, dataclass, field as dataclass_field
 
-from admin_helper.objects.config import FieldFrameworkConfig, MaskingFrameworkConfig
+from admin_helper.objects.config import (
+    FieldFrameworkConfig,
+    MaskingFrameworkConfig,
+    ObjectRegistryConfig,
+)
 from admin_helper.objects.field import _field_info, field
 
 if TYPE_CHECKING:
