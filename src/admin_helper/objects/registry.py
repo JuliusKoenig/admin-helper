@@ -75,8 +75,6 @@ class _ObjectRegistration:
         return bool(self.instances)
 
 
-
-
 # ---------------------------------------------------------------------------
 # Private registry implementation
 # ---------------------------------------------------------------------------
@@ -917,9 +915,7 @@ class _ObjectRegistry:
 
                 # Replace names, parent links, registration indexes, and suffix indexes.
                 for instance in subtree:
-                    self._index.remove(
-                        instance, object_name=old_names[id(instance)]
-                    )
+                    self._index.remove(instance, object_name=old_names[id(instance)])
                 with child._unlocked():
                     child.parent = parent
                 for instance in subtree:

@@ -150,9 +150,7 @@ class BaseObject(ABC):
             )
         self._initialize_framework_state(context)
 
-    def _initialize_framework_state(
-        self, context: _ObjectConstructionContext
-    ) -> None:
+    def _initialize_framework_state(self, context: _ObjectConstructionContext) -> None:
         """Assign object-local framework state without mutating registry indexes."""
 
         object.__setattr__(self, "_initialized", False)

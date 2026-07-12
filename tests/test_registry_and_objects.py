@@ -228,7 +228,6 @@ def test_failed_child_construction_leaves_no_tree_or_index_entry() -> None:
     assert created_roots[0].children == ()
 
 
-
 def test_runtime_index_rejects_ambiguous_suffix_and_deduplicates_wildcards() -> None:
     from admin_helper.exceptions import AmbiguousObjectNameError
     from admin_helper.objects.index import _ObjectIndex
