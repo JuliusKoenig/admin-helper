@@ -8,20 +8,21 @@ from typing import Any
 from rich.logging import RichHandler
 
 from admin_helper.console import AdminHelperConsole
-from admin_helper.objects.config import (
+from admin_helper.objects import (
+    BaseObject,
+    Formatter,
     LoggerConfigValue,
-    ObjectLoggerContexts,
     LoggerContextConfig,
-)
-from admin_helper.objects.field import field, computed_field, fields
-from admin_helper.objects.helper import register
-from admin_helper.objects.logger import MaskedValueFilter, Formatter
-from admin_helper.objects.object import (
+    LoggerParent,
+    MaskedValueFilter,
     ObjectLogger,
     ObjectLoggerConfig,
-    LoggerParent,
-    BaseObject,
+    ObjectLoggerContexts,
+    computed_field,
+    field,
+    fields,
     object_registry,
+    register,
 )
 
 

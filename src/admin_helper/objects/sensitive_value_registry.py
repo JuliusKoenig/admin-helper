@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from typing import Any, TYPE_CHECKING
 
 from admin_helper.objects.config import SensitiveValueFilterMode
-from admin_helper.objects.helper import (
+from admin_helper.objects.runtime import (
     _field_framework_config,
     _masking_framework_config,
 )

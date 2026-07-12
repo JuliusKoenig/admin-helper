@@ -8,7 +8,15 @@ from dataclasses import (
     _MISSING_TYPE,
 )
 from enum import Enum
-from typing import Iterable, Any, Callable, Mapping, get_type_hints
+from typing import (
+    Any,
+    Callable,
+    Iterable,
+    Mapping,
+    TypeVar,
+    dataclass_transform,
+    get_type_hints,
+)
 
 from admin_helper.warnings import FieldConfigurationWarning
 
@@ -261,6 +269,16 @@ def field(
         metadata=field_metadata,
         kw_only=kw_only,
     )
+
+
+_TClass = TypeVar("_TClass", bound=type)
+
+
+@dataclass_transform(field_specifiers=(field,))
+def object_dataclass(cls: _TClass) -> _TClass:
+    """Transform a class into a dataclass compatible with framework fields."""
+
+    return dataclass(cls)
 
 
 def computed_field(

@@ -27,7 +27,7 @@ from admin_helper.objects.config import (
 )
 from admin_helper.objects.field import _field_info
 from admin_helper.objects.logger import _get_object_logger, ObjectLogger
-from admin_helper.objects.helper import _bind_registry_config
+from admin_helper.objects.runtime import _bind_registry_config
 from admin_helper.objects.sensitive_value_registry import (
     _SensitiveValueRegistry,
     _bind_sensitive_value_registry,

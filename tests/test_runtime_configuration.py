@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from admin_helper.objects.config import SensitiveValueFilterMode
-from admin_helper.objects.helper import (
+from admin_helper.objects.formatting import _format_display_value
+from admin_helper.objects.runtime import (
     _field_framework_config,
-    _format_display_value,
     _masking_framework_config,
 )
 from admin_helper.objects.registry import object_registry

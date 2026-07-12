@@ -18,7 +18,8 @@ from admin_helper.objects.config import (
 )
 from admin_helper.console import AdminHelperConsole
 from admin_helper.exceptions import LoggerConfigurationError
-from admin_helper.objects.helper import _format_log_value, _masking_framework_config
+from admin_helper.objects.formatting import _format_log_value
+from admin_helper.objects.runtime import _masking_framework_config
 from admin_helper.objects.sensitive_value_registry import _sensitive_value_registry
 from admin_helper.warnings import SensitiveValueWarning
 

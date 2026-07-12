@@ -21,12 +21,9 @@ from admin_helper.objects.config import (
     SensitiveValueFilterMode,
     LoggerParent,
 )
-from admin_helper.objects.field import _field_info, field, fields
-from admin_helper.objects.helper import (
-    _format_display_value,
-    _masking_framework_config,
-    dataclass,
-)
+from admin_helper.objects.field import _field_info, field, fields, object_dataclass
+from admin_helper.objects.formatting import _format_display_value
+from admin_helper.objects.runtime import _masking_framework_config
 from admin_helper.objects.logger import ObjectLogger, _get_object_logger
 from admin_helper.objects.registry import object_registry, _construction_context
 from admin_helper.objects.sensitive_value_registry import _sensitive_value_registry
@@ -41,7 +38,7 @@ _T = TypeVar("_T", bound="BaseObject")
 _BROADCAST_METHODS: list[str] = []
 
 
-@dataclass
+@object_dataclass
 class BaseObject(ABC):
     """
     Base class for every registered node in the hierarchical object tree.

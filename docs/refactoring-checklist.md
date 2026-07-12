@@ -2,9 +2,9 @@
 
 ## ~~1. Fix runtime configuration and sensitive-value registry access~~
 
-## 2. Define the public API
+## ~~2. Define the public API~~
 
-## 3. Split up `helper.py`
+## ~~3. Split up `helper.py`~~
 
 ## 4. Decouple `BaseObject` construction from the registry
 

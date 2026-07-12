@@ -3,10 +3,18 @@ from __future__ import annotations
 import pytest
 
 from admin_helper.exceptions import BroadcastException
-from admin_helper.objects.field import computed_field, field
-from admin_helper.objects.helper import register
-from admin_helper.objects.object import BaseObject
-from admin_helper.objects.registry import object_registry
+from admin_helper.objects import (
+    BaseObject,
+    computed_field,
+    field,
+    object_registry,
+    register,
+)
+
+
+@register(abstract=True, name="abstract_service")
+class AbstractService(BaseObject):
+    pass
 
 
 @register(name="test_app")
@@ -51,6 +59,13 @@ class SecondService(BaseObject):
 @pytest.fixture(scope="module", autouse=True)
 def build_registry() -> None:
     object_registry.instantiate_all()
+
+
+def test_abstract_registration_is_publicly_detectable() -> None:
+    from admin_helper.objects import is_abstract
+
+    assert is_abstract(AbstractService) is True
+    assert object_registry.get_by_type(AbstractService) == ()
 
 
 def test_registry_builds_expected_tree() -> None:
