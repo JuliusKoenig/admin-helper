@@ -7,7 +7,7 @@ from abc import ABC
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import MISSING, fields as dataclass_fields
-from typing import Any, TypeVar, overload
+from typing import TYPE_CHECKING, Any, TypeVar, overload
 
 from admin_helper.exceptions import (
     BroadcastException,
@@ -15,18 +15,24 @@ from admin_helper.exceptions import (
     ObjectTreeLoopError,
 )
 from admin_helper.objects.config import (
+    LoggerParent,
     ObjectLoggerConfig,
-    _ResolvedObjectLoggerConfig,
     ObjectStatus,
     SensitiveValueFilterMode,
-    LoggerParent,
+    _ResolvedObjectLoggerConfig,
+)
+from admin_helper.objects.construction import (
+    _ObjectConstructionContext,
+    _construction_context,
 )
 from admin_helper.objects.field import _field_info, field, fields, object_dataclass
 from admin_helper.objects.formatting import _format_display_value
-from admin_helper.objects.runtime import _masking_framework_config
 from admin_helper.objects.logger import ObjectLogger, _get_object_logger
-from admin_helper.objects.registry import object_registry, _construction_context
+from admin_helper.objects.runtime import _masking_framework_config
 from admin_helper.objects.sensitive_value_registry import _sensitive_value_registry
+
+if TYPE_CHECKING:
+    from admin_helper.objects.registry import _ObjectRegistry
 
 # Generic type variable used to preserve concrete BaseObject subclasses in the
 # public lookup, child-access, and decorator APIs.
@@ -125,57 +131,52 @@ class BaseObject(ABC):
         title="Registration name",
         description="The name of the object.",
     )
+    _registry: _ObjectRegistry = field(
+        internal=True,
+        read_only=True,
+        init=False,
+        repr=False,
+        title="Registry",
+        description="The registry that owns the object.",
+    )
 
     def __post_init__(self) -> None:
-        """
-        Finalize a registry-created dataclass instance.  The method reads the active construction context, assigns immutable framework attributes, creates the hierarchical logger, rejects accidental construction of abstract templates, attaches the object to its parent, and finally enables the custom read_only-field protection.
-
-        :return:
-            Returns None.
-        """
-
-        # Direct construction is forbidden because framework-owned attributes
-        # and registry indexes would otherwise be missing or inconsistent.
+        """Initialize framework-owned state from the active construction context."""
 
         context = _construction_context.get()
         if context is None:
             raise RuntimeError(
                 f"{type(self).__module__}.{type(self).__qualname__} must be instantiated through _ObjectRegistry.instantiate_all()."
             )
+        self._initialize_framework_state(context)
 
-        # Copy all immutable framework values without triggering the custom
-        # __setattr__ guard, which is enabled only at the end.
-        registration = context.registration
+    def _initialize_framework_state(
+        self, context: _ObjectConstructionContext
+    ) -> None:
+        """Assign object-local framework state without mutating registry indexes."""
+
         object.__setattr__(self, "_initialized", False)
         object.__setattr__(self, "_status", ObjectStatus.INITIALIZING)
+        object.__setattr__(self, "_registry", context.registry)
         object.__setattr__(self, "name", context.object_name)
         object.__setattr__(self, "parent", context.parent)
-        object.__setattr__(self, "_abstract", registration.abstract)
-        object.__setattr__(self, "_registration_name", registration.name)
+        object.__setattr__(self, "_abstract", context.abstract)
+        object.__setattr__(self, "_registration_name", context.registration_name)
 
-        # Reject abstract templates before creating any runtime tree links.
         if self._abstract:
             raise AttributeError(
                 f"Object {self.name!r} is abstract and cannot be instantiated."
             )
 
-        # Every concrete object owns an independent mutable config instance.
-        # This is required when one template registration creates multiple
-        # objects below different concrete parents.
         configured_logger_config = self.logger_config.copy()
         object.__setattr__(self, "logger_config", configured_logger_config)
         configured_logger_config._bind(self._configure_logger_tree)
-
-        # Create and configure the object logger before attaching the node. The
-        # logger starts without handlers and forwards records to its parent by
-        # default. Root loggers forward to Python's root logger.
         self._configure_logger()
         self.logger.debug("Initializing %s.", self)
 
-        # Link the object into the runtime tree before enabling read_only-field
-        # protection. The registry also keeps all indexes synchronized.
-        if self.parent is not None:
-            object_registry._attach_child(self.parent, self)
+    def _finalize_framework_initialization(self) -> None:
+        """Enable field protection after the registry committed tree state."""
+
         object.__setattr__(self, "_initialized", True)
         object.__setattr__(self, "_status", ObjectStatus.READY)
         self._register_masked_fields()
@@ -523,7 +524,7 @@ class BaseObject(ABC):
             Returns an immutable tuple containing the requested values.
         """
 
-        return object_registry._children_of(self)
+        return tuple(self._children)
 
     @property
     def children_flat(self) -> tuple[BaseObject, ...]:
@@ -538,7 +539,7 @@ class BaseObject(ABC):
         visited: set[int] = set()
 
         def collect(parent: BaseObject) -> None:
-            for child in object_registry._children_of(parent):
+            for child in parent._children:
                 identity = id(child)
                 if identity in visited:
                     raise ObjectTreeLoopError(
@@ -571,7 +572,12 @@ class BaseObject(ABC):
         if not isinstance(obj, BaseObject):
             raise TypeError(f"{obj!r} is not an instance of BaseObject.")
 
-        return object_registry._attach_child(self, obj)
+        if self._registry is not obj._registry:
+            raise ValueError(
+                "Parent and child must belong to the same object registry."
+            )
+
+        return self._registry._attach_child(self, obj)
 
     @overload
     def get_child_by_name(self, name: str) -> BaseObject | None:
@@ -622,7 +628,22 @@ class BaseObject(ABC):
 
         # Resolve relative to this node; no global ambiguous-suffix search is
         # performed for child navigation.
-        child = object_registry._get_child_by_name(self, name)
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise ValueError("Name cannot be empty.")
+        full_name = (
+            normalized_name
+            if normalized_name.startswith(f"{self.name}.")
+            else f"{self.name}.{normalized_name}"
+        )
+        child = next(
+            (
+                descendant
+                for descendant in self.children_flat
+                if descendant.name == full_name
+            ),
+            None,
+        )
         if child is None:
             return None
         if expected_type is not None and not isinstance(child, expected_type):
@@ -643,7 +664,9 @@ class BaseObject(ABC):
             Returns an immutable tuple containing the requested values.
         """
 
-        return object_registry._get_children_by_type(self, expected_type)
+        return tuple(
+            child for child in self._children if isinstance(child, expected_type)
+        )
 
     def broadcast_call(
         self,

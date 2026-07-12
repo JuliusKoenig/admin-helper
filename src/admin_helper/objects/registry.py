@@ -5,9 +5,8 @@ import inspect
 import logging
 
 from collections.abc import Callable, Iterator, Mapping
-from contextvars import ContextVar
 from dataclasses import dataclass, field as dataclass_field, fields as dataclass_fields
-from typing import Any, cast, overload, TypeVar, TYPE_CHECKING, Optional
+from typing import Any, Optional, TypeVar, cast, overload
 
 from admin_helper.exceptions import (
     AmbiguousObjectNameError,
@@ -18,24 +17,26 @@ from admin_helper.exceptions import (
     RegistryError,
     UnregisteredSubclassError,
 )
+from admin_helper.objects.construction import (
+    _ObjectConstructionContext,
+    _construction_context,
+)
 from admin_helper.objects.config import (
-    ObjectRegistryConfig,
-    RegistryConfigChange,
     LoggerParent,
     ObjectLoggerConfig,
+    ObjectRegistryConfig,
     ObjectStatus,
+    RegistryConfigChange,
 )
 from admin_helper.objects.field import _field_info
-from admin_helper.objects.logger import _get_object_logger, ObjectLogger
+from admin_helper.objects.logger import ObjectLogger, _get_object_logger
+from admin_helper.objects.object import BaseObject
 from admin_helper.objects.runtime import _bind_registry_config
 from admin_helper.objects.sensitive_value_registry import (
     _SensitiveValueRegistry,
     _bind_sensitive_value_registry,
     _sensitive_value_registry,
 )
-
-if TYPE_CHECKING:
-    from admin_helper.objects.object import BaseObject
 
 _T = TypeVar("_T", bound="BaseObject")
 
@@ -75,22 +76,6 @@ class _ObjectRegistration:
         return bool(self.instances)
 
 
-@dataclass(frozen=True, slots=True)
-class _ConstructionContext:
-    """
-    Per-construction data passed safely through nested dataclass calls.
-    """
-
-    registration: _ObjectRegistration
-    object_name: str
-    parent: BaseObject | None
-
-
-# The context variable prevents constructor metadata from becoming public
-# dataclass parameters and remains safe across threads and asynchronous tasks.
-_construction_context: ContextVar[_ConstructionContext | None] = ContextVar(
-    "base_object_construction_context", default=None
-)
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +88,7 @@ class _ObjectRegistry:
     Own registration metadata, instances, indexes, and tree consistency.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, validate_all_subclasses: bool = False) -> None:
         """
         Initialize all internal indexes and lifecycle flags.  The registry stores registrations separately from instantiated objects. All mutable dictionaries remain private so callers cannot bypass validation, name uniqueness checks, or tree consistency rules.
 
@@ -112,6 +97,7 @@ class _ObjectRegistry:
         """
 
         self.config = ObjectRegistryConfig(self._apply_config_change)
+        self._validate_loaded_subclasses = validate_all_subclasses
         self._sensitive_values = _SensitiveValueRegistry()
         self._registrations_by_name: dict[str, _ObjectRegistration] = {}
         self._registrations_by_class: dict[type[BaseObject], _ObjectRegistration] = {}
@@ -255,7 +241,8 @@ class _ObjectRegistry:
         try:
             # Validate the complete definition graph before creating the first
             # object, so configuration errors cannot leave a partial tree.
-            self._validate_all_subclasses_registered()
+            if self._validate_loaded_subclasses:
+                self._validate_all_subclasses_registered()
             self._validate_parent_references()
             self._validate_no_parent_loops()
 
@@ -338,8 +325,6 @@ class _ObjectRegistry:
             Returns a value of type ``BaseObject``.
         """
 
-        from admin_helper.objects.object import BaseObject
-
         if registration.abstract:
             raise RegistryError(
                 f"Abstract registration {registration.name!r} cannot be instantiated."
@@ -380,8 +365,12 @@ class _ObjectRegistry:
 
         # Publish framework-owned values only for the duration of this one
         # constructor call. BaseObject.__post_init__ consumes this context.
-        context = _ConstructionContext(
-            registration=registration, object_name=object_name, parent=parent_instance
+        context = _ObjectConstructionContext(
+            registry=self,
+            object_name=object_name,
+            registration_name=registration.name,
+            abstract=registration.abstract,
+            parent=parent_instance,
         )
         token = _construction_context.set(context)
 
@@ -389,6 +378,8 @@ class _ObjectRegistry:
         for masked_value in temporary_masked_values:
             _sensitive_value_registry().register(masked_value)
 
+        instance: BaseObject | None = None
+        attached_to_parent = False
         try:
             # Constructor signatures differ between registered dataclasses. At
             # this dynamic boundary the safe common result type is BaseObject.
@@ -396,7 +387,18 @@ class _ObjectRegistry:
             instance = constructor(
                 *registration.constructor_args, **registration.constructor_kwargs
             )
+            if parent_instance is not None:
+                self._attach_new_child(parent_instance, instance)
+                attached_to_parent = True
+            instance._finalize_framework_initialization()
         except Exception as error:
+            if (
+                attached_to_parent
+                and instance is not None
+                and parent_instance is not None
+            ):
+                if instance in parent_instance._children:
+                    parent_instance._children.remove(instance)
             raise RegistryError(
                 f"Could not instantiate registration {registration.name!r} as object {object_name!r} using "
                 f"{registration.cls.__module__}.{registration.cls.__qualname__}: {error}"
@@ -408,6 +410,7 @@ class _ObjectRegistry:
 
         # Commit the fully initialized instance to all internal indexes only
         # after construction succeeded.
+        assert instance is not None
         registration.instances[object_name] = instance
         self._index_instance(instance)
         self._instance_registrations[id(instance)] = registration
@@ -465,8 +468,6 @@ class _ObjectRegistry:
         :return:
             Returns None.
         """
-
-        from admin_helper.objects.object import BaseObject
 
         # Collect first so the error can report every forgotten subclass in a
         # single diagnostic instead of failing one class at a time.
@@ -539,8 +540,6 @@ class _ObjectRegistry:
             Returns an immutable tuple containing the requested values.
         """
 
-        from admin_helper.objects.object import BaseObject
-
         result: list[type[BaseObject]] = []
         visited: set[type[BaseObject]] = set()
 
@@ -571,8 +570,6 @@ class _ObjectRegistry:
         :return:
             Returns a value of type ``_ObjectRegistration | None``.
         """
-
-        from admin_helper.objects.object import BaseObject
 
         # Parent references are definition-level values and intentionally do
         # not depend on whether any object has already been instantiated.
@@ -887,72 +884,22 @@ class _ObjectRegistry:
             if isinstance(instance, expected_type)
         )
 
-    def _children_of(self, parent: BaseObject) -> tuple[BaseObject, ...]:
-        """
-        Return a read-only tuple view of one object's direct children.
+    def _attach_new_child(self, parent: BaseObject, child: BaseObject) -> None:
+        """Attach a newly constructed child before committing registry indexes."""
 
-        :param parent:
-            The parent object, registration, or logger selector.
-
-        :return:
-            Returns an immutable tuple containing the requested values.
-        """
-
-        return tuple(parent._children)
-
-    def _get_child_by_name(self, parent: BaseObject, name: str) -> BaseObject | None:
-        """
-        Resolve a descendant path relative to one parent object.  The supplied name may be relative, such as ``routes.static_files``, or already start with the parent's complete path. Only objects below the supplied parent are accepted.
-
-        :param parent:
-            The parent object, registration, or logger selector.
-
-        :param name:
-            The name to process.
-
-        :return:
-            Returns the matching object, or None when no object matches.
-        """
-
-        # Convert relative descendant paths into an exact full path below the
-        # selected parent while accepting an already-qualified path as well.
-        normalized_name = self._normalize_name(name)
-        if normalized_name.startswith(f"{parent.name}."):
-            full_name = normalized_name
-        else:
-            full_name = f"{parent.name}.{normalized_name}"
-        obj = self._instances_by_name.get(full_name)
-        if obj is None:
-            return None
-        current = obj.parent
-        while current is not None:
-            if current is parent:
-                return obj
-            current = current.parent
-
-        return None
-
-    def _get_children_by_type(
-        self, parent: BaseObject, expected_type: type[_T]
-    ) -> tuple[_T, ...]:
-        """
-        Return direct children compatible with ``expected_type``.
-
-        :param parent:
-            The parent object, registration, or logger selector.
-
-        :param expected_type:
-            The type used to validate or filter returned objects.
-
-        :return:
-            Returns an immutable tuple containing the requested values.
-        """
-
-        return tuple(
-            child
-            for child in self._children_of(parent)
-            if isinstance(child, expected_type)
-        )
+        if parent._registry is not self or child._registry is not self:
+            raise ValueError(
+                "Parent and child must belong to the registry performing the attachment."
+            )
+        if child.parent is not parent:
+            raise ValueError(
+                "A newly constructed child must reference its construction parent."
+            )
+        if child in parent._children:
+            raise RegistryError(
+                f"Object {child.name!r} is already attached to {parent.name!r}."
+            )
+        parent._children.append(child)
 
     def _attach_child(self, parent: BaseObject, child: _T) -> _T:
         """
@@ -967,6 +914,11 @@ class _ObjectRegistry:
         :return:
             Returns a value of type ``_T``.
         """
+
+        if parent._registry is not self or child._registry is not self:
+            raise ValueError(
+                "Parent and child must belong to the registry performing the attachment."
+            )
 
         old_parent_name = child.parent.name if child.parent is not None else None
         previous_status = child._status
@@ -1290,6 +1242,6 @@ class _ObjectRegistry:
 
 # The singleton is the supported entry point for lookups. Creating additional
 # registry instances is intentionally not part of the public API.
-object_registry = _ObjectRegistry()
+object_registry = _ObjectRegistry(validate_all_subclasses=True)
 _bind_registry_config(object_registry.config)
 _bind_sensitive_value_registry(object_registry._sensitive_values)

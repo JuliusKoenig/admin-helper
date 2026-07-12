@@ -6,7 +6,7 @@
 
 ## ~~3. Split up `helper.py`~~
 
-## 4. Decouple `BaseObject` construction from the registry
+## ~~4. Decouple `BaseObject` construction from the registry~~
 
 ## 5. Extract registry runtime indexes
 

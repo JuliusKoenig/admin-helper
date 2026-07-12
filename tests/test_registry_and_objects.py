@@ -10,6 +10,7 @@ from admin_helper.objects import (
     object_registry,
     register,
 )
+from admin_helper.objects.field import object_dataclass
 
 
 @register(abstract=True, name="abstract_service")
@@ -142,3 +143,87 @@ def test_broadcast_wraps_failures() -> None:
 
     with pytest.raises(BroadcastException):
         app.broadcast_call("fail")
+
+
+def test_framework_initialization_finishes_after_tree_attachment() -> None:
+    (app,) = object_registry.get_by_type(ExampleApplication)
+    (service,) = object_registry.get_by_type(ExampleService)
+
+    assert service.parent is app
+    assert app.children.count(service) == 1
+    assert service.status.name == "READY"
+    assert service.logger is not None
+
+
+def test_object_local_child_navigation() -> None:
+    (app,) = object_registry.get_by_type(ExampleApplication)
+    (service,) = object_registry.get_by_type(ExampleService)
+    (worker,) = object_registry.get_by_type(ExampleWorker)
+
+    assert app.get_child_by_name("service") is service
+    assert app.get_child_by_name("service.worker", ExampleWorker) is worker
+    assert app.get_child_by_name("test_app.service.worker") is worker
+    assert service.get_child_by_type(ExampleWorker) == (worker,)
+    assert service.get_child_by_name("missing") is None
+
+
+def test_objects_from_different_registries_cannot_be_attached() -> None:
+    from admin_helper.objects.registry import _ObjectRegistry
+
+    first_registry = _ObjectRegistry()
+    second_registry = _ObjectRegistry()
+
+    @object_dataclass
+    class FirstRoot(BaseObject):
+        pass
+
+    @object_dataclass
+    class SecondRoot(BaseObject):
+        pass
+
+    first_registry._register(name="phase4_first", cls=FirstRoot, abstract=False)
+    second_registry._register(name="phase4_second", cls=SecondRoot, abstract=False)
+    first_registry.instantiate_all()
+    second_registry.instantiate_all()
+
+    (first,) = first_registry.get_by_type(FirstRoot)
+    (second,) = second_registry.get_by_type(SecondRoot)
+
+    with pytest.raises(ValueError, match="same object registry"):
+        first.add_child(second)
+
+
+def test_failed_child_construction_leaves_no_tree_or_index_entry() -> None:
+    from admin_helper.objects.registry import _ObjectRegistry
+
+    registry = _ObjectRegistry()
+    created_roots: list[BaseObject] = []
+
+    @object_dataclass
+    class Root(BaseObject):
+        def __post_init__(self) -> None:
+            super().__post_init__()
+            created_roots.append(self)
+
+    @object_dataclass
+    class BrokenChild(BaseObject):
+        def _finalize_framework_initialization(self) -> None:
+            super()._finalize_framework_initialization()
+            raise RuntimeError("broken child")
+
+    registry._register(name="phase4_root", cls=Root, abstract=False)
+    registry._register(
+        name="phase4_broken",
+        cls=BrokenChild,
+        abstract=False,
+        parent=Root,
+    )
+
+    with pytest.raises(Exception, match="broken child"):
+        registry.instantiate_all()
+
+    assert registry.instances() == ()
+    assert registry.get_by_type(Root) == ()
+    assert registry.get_by_type(BrokenChild) == ()
+    assert created_roots[0].children == ()
+
