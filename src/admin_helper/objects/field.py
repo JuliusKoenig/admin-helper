@@ -4,7 +4,8 @@ from dataclasses import (
     field as dataclass_field,
     fields as dataclass_fields,
     Field,
-    MISSING, _MISSING_TYPE,
+    MISSING,
+    _MISSING_TYPE,
 )
 from enum import Enum
 from typing import Iterable, Any, Callable, Mapping, get_type_hints
@@ -103,7 +104,6 @@ class ObjectFieldDefinition:
         if self.source is ObjectFieldSource.COMPUTED and callable(value):
             return value()
         return value
-
 
 
 def field(

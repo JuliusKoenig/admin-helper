@@ -2,7 +2,7 @@
 
 all: check
 
-check: test coverage lint format typecheck
+check: test coverage lint format_check typecheck
 
 test:
 	uv run pytest
@@ -12,6 +12,9 @@ coverage:
 
 lint:
 	uv run ruff check .
+
+format_check:
+	uv run ruff format --diff .
 
 format:
 	uv run ruff format .

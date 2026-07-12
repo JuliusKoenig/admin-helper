@@ -22,7 +22,11 @@ from admin_helper.objects.config import (
     LoggerParent,
 )
 from admin_helper.objects.field import _field_info, field, fields
-from admin_helper.objects.helper import _format_display_value, _masking_framework_config, dataclass
+from admin_helper.objects.helper import (
+    _format_display_value,
+    _masking_framework_config,
+    dataclass,
+)
 from admin_helper.objects.logger import ObjectLogger, _get_object_logger
 from admin_helper.objects.registry import object_registry, _construction_context
 from admin_helper.objects.sensitive_value_registry import _sensitive_value_registry
@@ -52,61 +56,78 @@ class BaseObject(ABC):
     # These names are intentionally public because users need them for normal
     # inspection and navigation. The custom read_only metadata prevents replacing
     # them after initialization.
-    name: str = field(read_only=True,
-                      init=False,
-                      title="Name",
-                      description="The name of the object.")
-    logger: ObjectLogger = field(read_only=True,
-                                 init=False,
-                                 repr=False,
-                                 title="Logger",
-                                 description="The logger of the object.")
-    parent: BaseObject | None = field(read_only=True,
-                                      init=False,
-                                      repr=False,
-                                      default=None,
-                                      title="Parent",
-                                      description="The parent of the object.")
+    name: str = field(
+        read_only=True, init=False, title="Name", description="The name of the object."
+    )
+    logger: ObjectLogger = field(
+        read_only=True,
+        init=False,
+        repr=False,
+        title="Logger",
+        description="The logger of the object.",
+    )
+    parent: BaseObject | None = field(
+        read_only=True,
+        init=False,
+        repr=False,
+        default=None,
+        title="Parent",
+        description="The parent of the object.",
+    )
 
     # Public logger configuration.
-    logger_config: ObjectLoggerConfig = field(kw_only=True,
-                                              repr=False,
-                                              default_factory=ObjectLoggerConfig,
-                                              title="Logger Configuration",
-                                              description="The configuration for the object's logger.")
+    logger_config: ObjectLoggerConfig = field(
+        kw_only=True,
+        repr=False,
+        default_factory=ObjectLoggerConfig,
+        title="Logger Configuration",
+        description="The configuration for the object's logger.",
+    )
 
     # Private mutable framework state.
-    _resolved_logger_config: _ResolvedObjectLoggerConfig = field(internal=True,
-                                                                 init=False,
-                                                                 title="Resolved logger configuration",
-                                                                 description="The configuration for the object's logger.")
-    _initialized: bool = field(internal=True,
-                               init=False,
-                               default=False,
-                               title="Initialized",
-                               description="Whether the object is initialized.")
-    _status: ObjectStatus = field(internal=True,
-                                  read_only=True,
-                                  init=False,
-                                  default=ObjectStatus.INITIALIZING,
-                                  title="Status",
-                                  description="The status of the object.")
-    _children: list[BaseObject] = field(internal=True,
-                                        init=False,
-                                        default_factory=list,
-                                        title="Children",
-                                        description="The children of the object.")
-    _abstract: bool = field(internal=True,
-                            read_only=True,
-                            init=False,
-                            default=False,
-                            title="Abstract",
-                            description="Whether the object is abstract.")
-    _registration_name: str = field(internal=True,
-                                    read_only=True,
-                                    init=False,
-                                    title="Registration name",
-                                    description="The name of the object.")
+    _resolved_logger_config: _ResolvedObjectLoggerConfig = field(
+        internal=True,
+        init=False,
+        title="Resolved logger configuration",
+        description="The configuration for the object's logger.",
+    )
+    _initialized: bool = field(
+        internal=True,
+        init=False,
+        default=False,
+        title="Initialized",
+        description="Whether the object is initialized.",
+    )
+    _status: ObjectStatus = field(
+        internal=True,
+        read_only=True,
+        init=False,
+        default=ObjectStatus.INITIALIZING,
+        title="Status",
+        description="The status of the object.",
+    )
+    _children: list[BaseObject] = field(
+        internal=True,
+        init=False,
+        default_factory=list,
+        title="Children",
+        description="The children of the object.",
+    )
+    _abstract: bool = field(
+        internal=True,
+        read_only=True,
+        init=False,
+        default=False,
+        title="Abstract",
+        description="Whether the object is abstract.",
+    )
+    _registration_name: str = field(
+        internal=True,
+        read_only=True,
+        init=False,
+        title="Registration name",
+        description="The name of the object.",
+    )
 
     def __post_init__(self) -> None:
         """
@@ -183,17 +204,17 @@ class BaseObject(ABC):
         """Register sensitive values according to the global protection mode."""
 
         if (
-                _masking_framework_config().mode is SensitiveValueFilterMode.DISABLED
-                or not _masking_framework_config().enabled
+            _masking_framework_config().mode is SensitiveValueFilterMode.DISABLED
+            or not _masking_framework_config().enabled
         ):
             return
         if include_computed is None:
             include_computed = (
-                    _masking_framework_config().mode
-                    is SensitiveValueFilterMode.FIELDS_AND_COMPUTED
+                _masking_framework_config().mode
+                is SensitiveValueFilterMode.FIELDS_AND_COMPUTED
             )
         for definition in fields(
-                self, masked=True, computed=None if include_computed else False
+            self, masked=True, computed=None if include_computed else False
         ):
             try:
                 value = definition.get_value(self)
@@ -205,16 +226,16 @@ class BaseObject(ABC):
         """Remove sensitive values according to the global protection mode."""
 
         if (
-                _masking_framework_config().mode is SensitiveValueFilterMode.DISABLED
-                or not _masking_framework_config().enabled
+            _masking_framework_config().mode is SensitiveValueFilterMode.DISABLED
+            or not _masking_framework_config().enabled
         ):
             return
         include_computed = (
-                _masking_framework_config().mode
-                is SensitiveValueFilterMode.FIELDS_AND_COMPUTED
+            _masking_framework_config().mode
+            is SensitiveValueFilterMode.FIELDS_AND_COMPUTED
         )
         for definition in fields(
-                self, masked=True, computed=None if include_computed else False
+            self, masked=True, computed=None if include_computed else False
         ):
             try:
                 value = definition.get_value(self)
@@ -252,9 +273,9 @@ class BaseObject(ABC):
         dataclass_field = None
         previous_masked_value = MISSING
         refresh_all_sensitive_values = (
-                initialized
-                and _masking_framework_config().mode
-                is SensitiveValueFilterMode.FIELDS_AND_COMPUTED
+            initialized
+            and _masking_framework_config().mode
+            is SensitiveValueFilterMode.FIELDS_AND_COMPUTED
         )
 
         if initialized:
@@ -280,9 +301,9 @@ class BaseObject(ABC):
         if refresh_all_sensitive_values:
             self._register_masked_fields()
         elif (
-                initialized
-                and dataclass_field is not None
-                and _field_info(dataclass_field).masked
+            initialized
+            and dataclass_field is not None
+            and _field_info(dataclass_field).masked
         ):
             if previous_masked_value is not MISSING:
                 _sensitive_value_registry().unregister(previous_masked_value)
@@ -338,7 +359,7 @@ class BaseObject(ABC):
         )
 
     def _resolve_logger_parent(
-            self, parent: LoggerParent | str
+        self, parent: LoggerParent | str
     ) -> logging.Logger | None:
         """
         Resolve the configured logging parent independently of config inheritance.
@@ -587,7 +608,7 @@ class BaseObject(ABC):
         ...
 
     def get_child_by_name(
-            self, name: str, expected_type: type[_T] | None = None
+        self, name: str, expected_type: type[_T] | None = None
     ) -> BaseObject | _T | None:
         """
         Return one descendant by a path relative to this object.  The method returns ``None`` when no matching descendant exists. Supplying ``expected_type`` preserves the concrete return type and raises ``TypeError`` when the located child has another type.
@@ -628,11 +649,11 @@ class BaseObject(ABC):
         return object_registry._get_children_by_type(self, expected_type)
 
     def broadcast_call(
-            self,
-            _method_name: str,
-            _wrap_errors: bool = not False,  # ToDo: configure this default value with something like debug mode
-            _stop_on_error: bool = True,
-            **method_kwargs: Any,
+        self,
+        _method_name: str,
+        _wrap_errors: bool = not False,  # ToDo: configure this default value with something like debug mode
+        _stop_on_error: bool = True,
+        **method_kwargs: Any,
     ) -> list[Any]:
         """
         Call one method across the child tree inside a broadcast context.
@@ -661,10 +682,10 @@ class BaseObject(ABC):
         object.__setattr__(self, "_status", ObjectStatus.BROADCASTING)
         try:
             with self.logger.context(
-                    "broadcast",
-                    method=_method_name,
-                    stop_on_error=_stop_on_error,
-                    wrap_errors=_wrap_errors,
+                "broadcast",
+                method=_method_name,
+                stop_on_error=_stop_on_error,
+                wrap_errors=_wrap_errors,
             ):
                 self.logger.debug(
                     "Broadcasting method '%s' from %s.", _method_name, self
