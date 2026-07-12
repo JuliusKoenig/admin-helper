@@ -9,8 +9,7 @@ from rich.logging import RichHandler
 
 from admin_helper.console import AdminHelperConsole
 from admin_helper.objects import ObjectLogger, _MaskedValueFilter, register, ObjectLoggerConfig, LoggerParent, LoggerConfigValue, ObjectLoggerContexts, \
-    LoggerContextConfig, BaseObject, field, Display, ReadOnly, Masked, Internal, computed_field, display_field, masked_field, internal_field, object_registry, \
-    get_object_fields
+    LoggerContextConfig, BaseObject, field, computed_field, object_registry, get_fields
 
 
 # Registration messages are emitted before object instances and their handlers
@@ -109,8 +108,9 @@ class WorkerObjectLogger(ObjectLogger):
 class Application(BaseObject):
     """Root object using the central console and application log file."""
 
-    environment: str = field(Display(),
-                             ReadOnly(),
+    environment: str = field(display=True,
+                             kw_only=True,
+                             read_only=True,
                              default="development",
                              title="Environment",
                              description="Runtime environment of the application.")
@@ -126,30 +126,31 @@ class Application(BaseObject):
 class DatabaseService(BaseObject):
     """Service demonstrating display, masked, read-only, and internal fields."""
 
-    host: str = field(Display(),
+    host: str = field(display=True,
                       title="Database host",
                       description="Hostname or IP address of the database server.")
-    port: int = field(Display(),
+    port: int = field(display=True,
                       title="Database port",
                       description="TCP port used for database connections.")
-    username: str = field(Display(),
+    username: str = field(display=True,
                           title="Database user",
                           description="User name used to authenticate to the database.")
-    password: str = field(Display(),
-                          Masked(),
+    password: str = field(display=True,
+                          masked=True,
                           title="Database password",
                           description="Secret used to authenticate the database user.")
-    optional_token: str | None = field(Display(),
-                                       Masked(("unset", "disabled")),
+    optional_token: str | None = field(display=True,
+                                       masked=True,
+                                       empty_values=("unset", "disabled"),
                                        default=None,
                                        title="Optional token",
                                        description="Optional secondary credential.")
-    service_id: str = field(Display(),
-                            ReadOnly(),
+    service_id: str = field(display=True,
+                            read_only=True,
                             default="database-primary",
                             title="Service identifier",
                             description="Stable identifier assigned during construction.")
-    _connection_attempts: int = field(Internal(),
+    _connection_attempts: int = field(internal=True,
                                       default=0,
                                       title="Connection attempts",
                                       description="Internal connection-attempt counter.")
@@ -200,13 +201,16 @@ class DatabaseService(BaseObject):
 class WorkerService(BaseObject):
     """Service using a dedicated logger class and an additional file handler."""
 
-    queue: str = display_field(title="Queue",
-                               description="Queue consumed by the worker.")
-    access_token: str = masked_field(title="Access token",
-                                     description="Credential used by the worker.")
-    _processed_tasks: int = internal_field(default=0,
-                                           title="Processed tasks",
-                                           description="Internal number of processed tasks.")
+    queue: str = field(display=True,
+                       title="Queue",
+                       description="Queue consumed by the worker.")
+    access_token: str = field(masked=True,
+                              title="Access token",
+                              description="Credential used by the worker.")
+    _processed_tasks: int = field(internal=True,
+                                  default=0,
+                                  title="Processed tasks",
+                                  description="Internal number of processed tasks.")
 
     def process_task(self,
                      task_name: str) -> None:
@@ -229,27 +233,8 @@ class WorkerService(BaseObject):
                                    processed_tasks=self._processed_tasks)
 
 
-# ---------------------------------------------------------------------------
-# Application bootstrap and usage examples
-# ---------------------------------------------------------------------------
-
-def initialize_objects() -> None:
-    """
-    Build and validate the global object registry once.
-
-    Examples:
-        initialize_objects()
-            Validates the definitions and builds the global object tree once.
-
-    :return:
-        Returns None.
-    """
-
-    object_registry.instantiate_all()
-
-
 if __name__ == "__main__":
-    initialize_objects()
+    object_registry.instantiate_all()
 
     application = object_registry.get_by_name("application", Application)
     database = object_registry.get_by_name("database", DatabaseService)
@@ -262,8 +247,8 @@ if __name__ == "__main__":
     print(worker)
 
     # Query stored and computed fields through one interface.
-    print(get_object_fields(database, display=True))
-    print(get_object_fields(DatabaseService, masked=True))
+    print(get_fields(database, display=True))
+    print(get_fields(DatabaseService, masked=True))
 
     # ``endpoint`` is an automatically created property. The masked computed
     # field keeps explicit call semantics because ``as_property=False``.

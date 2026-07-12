@@ -31,11 +31,11 @@ from abc import ABC
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import MISSING, Field, dataclass, field as dataclass_field, fields, replace
+from dataclasses import MISSING, Field, dataclass, field as dataclass_field, fields as dataclass_fields, replace
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from enum import Enum
-from typing import Any, Generic, TypeVar, cast, dataclass_transform, get_type_hints, overload, Literal
+from typing import Any, TypeVar, cast, dataclass_transform, get_type_hints, overload, Literal
 
 from rich.logging import RichHandler
 
@@ -87,14 +87,8 @@ __all__ = [
     "SensitiveValueFilterMode",
     "UnregisteredSubclassError",
     "computed_field",
-    "get_object_fields",
+    "get_fields",
     "is_abstract",
-    "Display",
-    "FieldMatch",
-    "FieldTrait",
-    "Internal",
-    "Masked",
-    "ReadOnly",
     "field",
     "object_registry",
     "register",
@@ -103,7 +97,6 @@ __all__ = [
 # Generic type variable used to preserve concrete BaseObject subclasses in the
 # public lookup, child-access, and decorator APIs.
 _T = TypeVar("_T", bound="BaseObject")
-_FieldTraitT = TypeVar("_FieldTraitT", bound="FieldTrait")
 
 # Reserved method names may later be used to constrain or document broadcast
 # operations. The collection is private because callers must not mutate global
@@ -158,39 +151,6 @@ class SensitiveValueFilterMode(Enum):
     FIELDS_AND_COMPUTED = "fields_and_computed"
 
 
-class FieldTrait:
-    """Base class for declarative field traits."""
-
-
-@dataclass(frozen=True, slots=True)
-class Display(FieldTrait):
-    """Include a field in the concise object representation."""
-
-
-@dataclass(frozen=True, slots=True)
-class ReadOnly(FieldTrait):
-    """Prevent reassignment after object initialization."""
-
-
-@dataclass(frozen=True, slots=True)
-class Internal(FieldTrait):
-    """Mark a field as an implementation-only attribute."""
-
-
-@dataclass(frozen=True, slots=True)
-class Masked(FieldTrait):
-    """Hide a field value in representations and managed logs."""
-
-    empty_values: tuple[Any, ...] = ()
-
-
-class FieldMatch(Enum):
-    """Select whether all or any requested traits must match."""
-
-    ALL = "all"
-    ANY = "any"
-
-
 @dataclass(frozen=True, slots=True)
 class FieldInfo:
     """
@@ -202,7 +162,7 @@ class FieldInfo:
     :param description:
         The longer explanation used by generated interfaces.
 
-    :param frozen:
+    :param read_only:
         Whether the value becomes read-only after object initialization.
 
     :param internal:
@@ -218,43 +178,13 @@ class FieldInfo:
         Additional values treated as not set for this field.
     """
 
-    title: str | None = None
-    description: str | None = None
-    traits: tuple[FieldTrait, ...] = ()
-
-    def has_trait(self, trait_type: type[FieldTrait]) -> bool:
-        """Return whether this field contains the requested trait type."""
-
-        return any(isinstance(trait, trait_type) for trait in self.traits)
-
-    def get_trait(self, trait_type: type[_FieldTraitT]) -> _FieldTraitT | None:
-        """Return the first matching trait instance."""
-
-        for trait in self.traits:
-            if isinstance(trait, trait_type):
-                return trait
-        return None
-
-    @property
-    def frozen(self) -> bool:
-        return self.has_trait(ReadOnly)
-
-    @property
-    def internal(self) -> bool:
-        return self.has_trait(Internal)
-
-    @property
-    def masked(self) -> bool:
-        return self.has_trait(Masked)
-
-    @property
-    def display(self) -> bool:
-        return self.has_trait(Display)
-
-    @property
-    def empty_values(self) -> tuple[Any, ...]:
-        masked = self.get_trait(Masked)
-        return masked.empty_values if masked is not None else ()
+    title: str | None = dataclass_field(default=None)
+    description: str | None = dataclass_field(default=None)
+    read_only: bool = dataclass_field(default=False)
+    internal: bool = dataclass_field(default=False)
+    masked: bool = dataclass_field(default=False)
+    display: bool = dataclass_field(default=False)
+    empty_values: Iterable[Any] = dataclass_field(default_factory=tuple)
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,26 +234,22 @@ class ObjectFieldDefinition:
 _UNSET = object()
 
 
-def _warn_field_conflict(message: str) -> None:
-    warnings.warn(message, FieldConfigurationWarning, stacklevel=3)
 
-
-def object_field(*traits: FieldTrait,
-                 default: Any = MISSING,
-                 default_factory: Any = MISSING,
-                 init: bool | object = _UNSET,
-                 repr: bool | object = _UNSET,
-                 compare: bool | object = _UNSET,
-                 hash: bool | None = None,
-                 kw_only: bool | Any = MISSING,
-                 frozen: bool = False,
-                 internal: bool = False,
-                 masked: bool = False,
-                 display: bool = False,
-                 title: str | None = None,
-                 description: str | None = None,
-                 empty_values: Iterable[Any] = (),
-                 metadata: Mapping[str, Any] | None = None) -> Field[Any]:
+def field(default: Any = MISSING,
+          default_factory: Any = MISSING,
+          init: bool | object = _UNSET,
+          repr: bool | object = _UNSET,
+          compare: bool | object = _UNSET,
+          hash: bool | None = None,
+          kw_only: bool | Any = MISSING,
+          read_only: bool = False,
+          internal: bool = False,
+          masked: bool = False,
+          display: bool = False,
+          title: str | None = None,
+          description: str | None = None,
+          empty_values: Iterable[Any] = (),
+          metadata: Mapping[str, Any] | None = None) -> Field[Any]:
     """
     Define a framework-aware dataclass field.
 
@@ -332,10 +258,10 @@ def object_field(*traits: FieldTrait,
     warning.
 
     Examples:
-        password: str = object_field(masked=True, display=True)
+        password: str = field(masked=True, display=True)
             Creates a displayed field whose actual value is never rendered.
 
-        _cache: dict[str, Any] = object_field(
+        _cache: dict[str, Any] = field(
             internal=True,
             default_factory=dict,
         )
@@ -362,7 +288,7 @@ def object_field(*traits: FieldTrait,
     :param kw_only:
         Whether the field is keyword-only.
 
-    :param frozen:
+    :param read_only:
         Whether reassignment is blocked after object initialization.
 
     :param internal:
@@ -397,20 +323,23 @@ def object_field(*traits: FieldTrait,
     resolved_repr = True if repr is _UNSET else bool(repr)
     resolved_compare = True if compare is _UNSET else bool(compare)
 
-    frozen = frozen or any(isinstance(trait, ReadOnly) for trait in traits)
-    internal = internal or any(isinstance(trait, Internal) for trait in traits)
-    masked = masked or any(isinstance(trait, Masked) for trait in traits)
-    display = display or any(isinstance(trait, Display) for trait in traits)
-
     if internal:
         if init is not _UNSET and resolved_init:
-            _warn_field_conflict("Internal fields cannot be constructor parameters; init=True was ignored.")
+            warnings.warn("Internal fields cannot be constructor parameters; init=True was ignored.",
+                          FieldConfigurationWarning,
+                          stacklevel=3)
         if repr is not _UNSET and resolved_repr:
-            _warn_field_conflict("Internal fields cannot appear in repr; repr=True was ignored.")
+            warnings.warn("Internal fields cannot appear in repr; repr=True was ignored.",
+                          FieldConfigurationWarning,
+                          stacklevel=3)
         if compare is not _UNSET and resolved_compare:
-            _warn_field_conflict("Internal fields do not participate in comparisons; compare=True was ignored.")
+            warnings.warn("Internal fields do not participate in comparisons; compare=True was ignored.",
+                          FieldConfigurationWarning,
+                          stacklevel=3)
         if display:
-            _warn_field_conflict("Internal fields cannot be display fields; display=True was ignored.")
+            warnings.warn("Internal fields cannot be display fields; display=True was ignored.",
+                          FieldConfigurationWarning,
+                          stacklevel=3)
         resolved_init = False
         resolved_repr = False
         resolved_compare = False
@@ -418,41 +347,18 @@ def object_field(*traits: FieldTrait,
 
     if masked and resolved_repr:
         if repr is not _UNSET:
-            _warn_field_conflict("Masked fields cannot appear in the dataclass repr; repr=True was ignored.")
-        resolved_repr = False
-
-    normalized_traits: list[FieldTrait] = list(traits)
-    if frozen and not any(isinstance(trait, ReadOnly) for trait in normalized_traits):
-        normalized_traits.append(ReadOnly())
-    if internal and not any(isinstance(trait, Internal) for trait in normalized_traits):
-        normalized_traits.append(Internal())
-    if display and not any(isinstance(trait, Display) for trait in normalized_traits):
-        normalized_traits.append(Display())
-    if masked and not any(isinstance(trait, Masked) for trait in normalized_traits):
-        normalized_traits.append(Masked(tuple(empty_values)))
-    elif empty_values:
-        masked_trait = next((trait for trait in normalized_traits if isinstance(trait, Masked)), None)
-        if masked_trait is None:
-            warnings.warn("empty_values has no effect without Masked(); the values were ignored.",
+            warnings.warn("Masked fields cannot appear in the dataclass repr; repr=True was ignored.",
                           FieldConfigurationWarning,
-                          stacklevel=2)
-        elif not masked_trait.empty_values:
-            normalized_traits = [Masked(tuple(empty_values)) if trait is masked_trait else trait
-                                 for trait in normalized_traits]
-
-    duplicate_types = [trait_type.__name__ for trait_type in {type(trait) for trait in normalized_traits}
-                       if sum(isinstance(item, trait_type) for item in normalized_traits) > 1]
-    if duplicate_types:
-        raise ValueError(f"Field traits cannot be repeated: {', '.join(sorted(duplicate_types))}.")
-
-    frozen = any(isinstance(trait, ReadOnly) for trait in normalized_traits)
-    internal = any(isinstance(trait, Internal) for trait in normalized_traits)
-    masked = any(isinstance(trait, Masked) for trait in normalized_traits)
-    display = any(isinstance(trait, Display) for trait in normalized_traits)
+                          stacklevel=3)
+        resolved_repr = False
 
     info = FieldInfo(title=title,
                      description=description,
-                     traits=tuple(normalized_traits))
+                     read_only=read_only,
+                     internal=internal,
+                     masked=masked,
+                     display=display,
+                     empty_values=empty_values)
     field_metadata = dict(metadata or {})
     if FIELD_INFO_METADATA_KEY in field_metadata:
         raise ValueError(f"metadata key {FIELD_INFO_METADATA_KEY!r} is reserved by the framework.")
@@ -468,35 +374,10 @@ def object_field(*traits: FieldTrait,
                            kw_only=kw_only)
 
 
-def read_only_field(**kwargs: Any) -> Field[Any]:
-    """Deprecated compatibility wrapper for ``field(ReadOnly(), ...)``."""
-
-    return object_field(ReadOnly(), **kwargs)
-
-
-def internal_field(**kwargs: Any) -> Field[Any]:
-    """Deprecated compatibility wrapper for ``field(Internal(), ...)``."""
-
-    return object_field(Internal(), **kwargs)
-
-
-def display_field(**kwargs: Any) -> Field[Any]:
-    """Deprecated compatibility wrapper for ``field(Display(), ...)``."""
-
-    return object_field(Display(), **kwargs)
-
-
-def masked_field(**kwargs: Any) -> Field[Any]:
-    """Deprecated compatibility wrapper for ``field(Display(), Masked(), ...)``."""
-
-    empty_values = tuple(kwargs.pop("empty_values", ()))
-    return object_field(Display(), Masked(empty_values), **kwargs)
-
-
 def computed_field(*,
                    title: str | None = None,
                    description: str | None = None,
-                   frozen: bool = True,
+                   read_only: bool = True,
                    internal: bool = False,
                    masked: bool = False,
                    display: bool = False,
@@ -520,7 +401,7 @@ def computed_field(*,
     :param description:
         The longer explanation used by generated interfaces.
 
-    :param frozen:
+    :param read_only:
         Whether the computed value is conceptually read-only.
 
     :param internal:
@@ -543,21 +424,18 @@ def computed_field(*,
     """
 
     if internal and display:
-        _warn_field_conflict("Internal computed fields cannot be display fields; display=True was ignored.")
+        warnings.warn("Internal computed fields cannot be display fields; display=True was ignored.",
+                      FieldConfigurationWarning,
+                      stacklevel=3)
         display = False
 
-    computed_traits: list[FieldTrait] = []
-    if frozen:
-        computed_traits.append(ReadOnly())
-    if internal:
-        computed_traits.append(Internal())
-    if masked:
-        computed_traits.append(Masked(tuple(empty_values)))
-    if display:
-        computed_traits.append(Display())
     info = ComputedFieldInfo(title=title,
                              description=description,
-                             traits=tuple(computed_traits),
+                             read_only=read_only,
+                             internal=internal,
+                             masked=masked,
+                             display=display,
+                             empty_values=empty_values,
                              as_property=as_property)
 
     def decorator(func: Callable[..., Any]) -> property | Callable[..., Any]:
@@ -572,17 +450,14 @@ def _field_info(dataclass_field: Field[Any]) -> FieldInfo:
     return value if isinstance(value, FieldInfo) else FieldInfo()
 
 
-def get_object_fields(obj_or_cls: Any,
-                      *,
-                      name: str | None = None,
-                      display: bool | None = None,
-                      masked: bool | None = None,
-                      internal: bool | None = None,
-                      frozen: bool | None = None,
-                      computed: bool | None = None,
-                      traits: tuple[type[FieldTrait], ...] = (),
-                      exclude_traits: tuple[type[FieldTrait], ...] = (),
-                      match: FieldMatch = FieldMatch.ALL) -> tuple[ObjectFieldDefinition, ...]:
+def get_fields(obj_or_cls: Any,
+               *,
+               name: str | None = None,
+               display: bool | None = None,
+               masked: bool | None = None,
+               internal: bool | None = None,
+               read_only: bool | None = None,
+               computed: bool | None = None) -> tuple[ObjectFieldDefinition, ...]:
     """
     Query stored and computed fields through one stable interface.
 
@@ -608,7 +483,7 @@ def get_object_fields(obj_or_cls: Any,
     :param internal:
         Optional filter for internal fields.
 
-    :param frozen:
+    :param read_only:
         Optional filter for read-only fields.
 
     :param computed:
@@ -629,7 +504,7 @@ def get_object_fields(obj_or_cls: Any,
 
     result: list[ObjectFieldDefinition] = []
     if computed is not True:
-        for item in fields(cls):
+        for item in dataclass_fields(cls):
             info = _field_info(item)
             result.append(ObjectFieldDefinition(name=item.name,
                                                 owner=cls,
@@ -656,24 +531,16 @@ def get_object_fields(obj_or_cls: Any,
                                                     source=ObjectFieldSource.COMPUTED,
                                                     descriptor=descriptor))
 
-    def matches(item: ObjectFieldDefinition) -> bool:
-        if name is not None and item.name != name:
+    def matches(_item: ObjectFieldDefinition) -> bool:
+        if name is not None and _item.name != name:
             return False
-        if display is not None and item.info.display is not display:
+        if display is not None and _item.info.display is not display:
             return False
-        if masked is not None and item.info.masked is not masked:
+        if masked is not None and _item.info.masked is not masked:
             return False
-        if internal is not None and item.info.internal is not internal:
+        if internal is not None and _item.info.internal is not internal:
             return False
-        if frozen is not None and item.info.frozen is not frozen:
-            return False
-        if traits:
-            results = tuple(item.info.has_trait(trait_type) for trait_type in traits)
-            if match is FieldMatch.ALL and not all(results):
-                return False
-            if match is FieldMatch.ANY and not any(results):
-                return False
-        if any(item.info.has_trait(trait_type) for trait_type in exclude_traits):
+        if read_only is not None and _item.info.read_only is not read_only:
             return False
         return True
 
@@ -2566,7 +2433,7 @@ class _ObjectRegistry:
 
         masked_names = {
             dataclass_field.name
-            for dataclass_field in fields(registration.cls)
+            for dataclass_field in dataclass_fields(registration.cls)
             if _field_info(dataclass_field).masked
         }
 
@@ -3480,9 +3347,6 @@ class _ObjectRegistry:
 # registry instances is intentionally not part of the public API.
 object_registry = _ObjectRegistry()
 
-# Public drop-in replacement for dataclasses.field.
-field = object_field
-
 
 # ---------------------------------------------------------------------------
 # Public object base class
@@ -3501,33 +3365,61 @@ class BaseObject(ABC):
     # Public read-only framework attributes.
     #
     # These names are intentionally public because users need them for normal
-    # inspection and navigation. The custom frozen metadata prevents replacing
+    # inspection and navigation. The custom read_only metadata prevents replacing
     # them after initialization.
-    name: str = read_only_field(init=False)
-    logger: ObjectLogger = read_only_field(init=False,
-                                           repr=False)
-    parent: BaseObject | None = read_only_field(default=None,
-                                                init=False,
-                                                repr=False)
+    name: str = field(init=False,
+                      read_only=True,
+                      title="Name",
+                      description="The name of the object.")
+    logger: ObjectLogger = field(init=False,
+                                 read_only=True,
+                                 repr=False,
+                                 title="Logger",
+                                 description="The logger of the object.")
+    parent: BaseObject | None = field(default=None,
+                                      init=False,
+                                      read_only=True,
+                                      repr=False,
+                                      title="Parent",
+                                      description="The parent of the object.")
 
     # Public logger configuration.
-    logger_config: ObjectLoggerConfig = object_field(default_factory=ObjectLoggerConfig,
-                                                     repr=False,
-                                                     kw_only=True)
+    logger_config: ObjectLoggerConfig = field(default_factory=ObjectLoggerConfig,
+                                              repr=False,
+                                              kw_only=True,
+                                              title="Logger Configuration",
+                                              description="The configuration for the object's logger.")
 
     # Private mutable framework state.
-    _resolved_logger_config: _ResolvedObjectLoggerConfig = internal_field()
-    _initialized: bool = internal_field(default=False)
-    _status: ObjectStatus = internal_field(default=ObjectStatus.INITIALIZING,
-                                           frozen=True)
-    _children: list[BaseObject] = internal_field(default_factory=list)
-    _abstract: bool = internal_field(default=False,
-                                     frozen=True)
-    _registration_name: str = internal_field(frozen=True)
+    _resolved_logger_config: _ResolvedObjectLoggerConfig = field(internal=True,
+                                                                 title="Resolved logger configuration",
+                                                                 description="The configuration for the object's logger.")
+    _initialized: bool = field(default=False,
+                               internal=True,
+                               title="Initialized",
+                               description="Whether the object is initialized.")
+    _status: ObjectStatus = field(default=ObjectStatus.INITIALIZING,
+                                  read_only=True,
+                                  internal=True,
+                                  title="Status",
+                                  description="The status of the object.")
+    _children: list[BaseObject] = field(default_factory=list,
+                                        internal=True,
+                                        title="Children",
+                                        description="The children of the object.")
+    _abstract: bool = field(default=False,
+                            read_only=True,
+                            internal=True,
+                            title="Abstract",
+                            description="Whether the object is abstract.")
+    _registration_name: str = field(read_only=True,
+                                    internal=True,
+                                    title="Registration name",
+                                    description="The name of the object.")
 
     def __post_init__(self) -> None:
         """
-        Finalize a registry-created dataclass instance.  The method reads the active construction context, assigns immutable framework attributes, creates the hierarchical logger, rejects accidental construction of abstract templates, attaches the object to its parent, and finally enables the custom frozen-field protection.
+        Finalize a registry-created dataclass instance.  The method reads the active construction context, assigns immutable framework attributes, creates the hierarchical logger, rejects accidental construction of abstract templates, attaches the object to its parent, and finally enables the custom read_only-field protection.
 
         :return:
             Returns None.
@@ -3535,6 +3427,7 @@ class BaseObject(ABC):
 
         # Direct construction is forbidden because framework-owned attributes
         # and registry indexes would otherwise be missing or inconsistent.
+
         context = _construction_context.get()
         if context is None:
             raise RuntimeError(f"{type(self).__module__}.{type(self).__qualname__} must be instantiated through _ObjectRegistry.instantiate_all().")
@@ -3566,7 +3459,7 @@ class BaseObject(ABC):
         self._configure_logger()
         self.logger.debug("Initializing %s.", self)
 
-        # Link the object into the runtime tree before enabling frozen-field
+        # Link the object into the runtime tree before enabling read_only-field
         # protection. The registry also keeps all indexes synchronized.
         if self.parent is not None:
             object_registry._attach_child(self.parent, self)
@@ -3579,7 +3472,7 @@ class BaseObject(ABC):
         """Return a concise representation built from display fields."""
 
         parts = [f"name='{self.name}'"]
-        for definition in get_object_fields(self, display=True, internal=False):
+        for definition in get_fields(self, display=True, internal=False):
             if definition.name == "name":
                 continue
             try:
@@ -3596,7 +3489,7 @@ class BaseObject(ABC):
             return
         if include_computed is None:
             include_computed = _masking_framework_config().mode is SensitiveValueFilterMode.FIELDS_AND_COMPUTED
-        for definition in get_object_fields(self, masked=True, computed=None if include_computed else False):
+        for definition in get_fields(self, masked=True, computed=None if include_computed else False):
             try:
                 value = definition.get_value(self)
             except Exception:
@@ -3609,7 +3502,7 @@ class BaseObject(ABC):
         if _masking_framework_config().mode is SensitiveValueFilterMode.DISABLED or not _masking_framework_config().enabled:
             return
         include_computed = _masking_framework_config().mode is SensitiveValueFilterMode.FIELDS_AND_COMPUTED
-        for definition in get_object_fields(self, masked=True, computed=None if include_computed else False):
+        for definition in get_fields(self, masked=True, computed=None if include_computed else False):
             try:
                 value = definition.get_value(self)
             except Exception:
@@ -3620,7 +3513,7 @@ class BaseObject(ABC):
                     key: str,
                     value: Any) -> None:
         """
-        Prevent changes to dataclass fields marked with ``metadata={'frozen': True}``.  The protection is enabled only after framework initialization. Internal code can temporarily disable it through the private ``_unlocked`` context manager.
+        Prevent changes to dataclass fields marked with ``metadata={'read_only': True}``.  The protection is enabled only after framework initialization. Internal code can temporarily disable it through the private ``_unlocked`` context manager.
 
         :param key:
             The attribute or configuration-field name.
@@ -3633,7 +3526,7 @@ class BaseObject(ABC):
         """
 
         # Before initialization, dataclass and framework assignments must pass.
-        # Afterwards, only fields explicitly marked frozen are protected.
+        # Afterwards, only fields explicitly marked read_only are protected.
         initialized = getattr(self, "_initialized", False)
         if key == "logger_config":
             if not isinstance(value, ObjectLoggerConfig):
@@ -3652,11 +3545,11 @@ class BaseObject(ABC):
 
         if initialized:
             dataclass_field = next((dataclass_field
-                                    for dataclass_field in fields(self)
+                                    for dataclass_field in dataclass_fields(self)
                                     if dataclass_field.name == key),
                                    None)
-            if dataclass_field is not None and _field_info(dataclass_field).frozen:
-                raise AttributeError(f"Field {dataclass_field.name!r} is frozen and cannot be modified.")
+            if dataclass_field is not None and _field_info(dataclass_field).read_only:
+                raise AttributeError(f"Field {dataclass_field.name!r} is read_only and cannot be modified.")
             if refresh_all_sensitive_values:
                 self._unregister_masked_fields()
             elif dataclass_field is not None and _field_info(dataclass_field).masked:
@@ -3787,7 +3680,7 @@ class BaseObject(ABC):
     @contextmanager
     def _unlocked(self) -> Iterator[BaseObject]:
         """
-        Temporarily disable the custom frozen-field guard.  The previous lock state is restored in ``finally`` even when an exception is raised. This method is private and reserved for registry-maintained updates.
+        Temporarily disable the custom read_only-field guard.  The previous lock state is restored in ``finally`` even when an exception is raised. This method is private and reserved for registry-maintained updates.
 
         :return:
             Returns an iterator over the requested values.
@@ -4003,7 +3896,7 @@ class BaseObject(ABC):
 
     def broadcast_call(self,
                        _method_name: str,
-                       _wrap_errors: bool = not False, # ToDo: configure this default value with something like debug mode
+                       _wrap_errors: bool = not False,  # ToDo: configure this default value with something like debug mode
                        _stop_on_error: bool = True,
                        **method_kwargs: Any) -> list[Any]:
         """
@@ -4113,7 +4006,7 @@ def _default_object_name(cls: type[BaseObject]) -> str:
 def _validate_framework_field_names(cls: type[BaseObject]) -> None:
     """Validate naming conventions required by framework field categories."""
 
-    for dataclass_field in fields(cls):
+    for dataclass_field in dataclass_fields(cls):
         if (_field_info(dataclass_field).internal
                 and not dataclass_field.name.startswith("_")):
             raise TypeError(
@@ -4188,12 +4081,7 @@ def register(*,
     ...
 
 
-@dataclass_transform(field_specifiers=(field,
-                                       object_field,
-                                       read_only_field,
-                                       internal_field,
-                                       display_field,
-                                       masked_field))
+@dataclass_transform(field_specifiers=(field, dataclass_field))
 def register(*,
              abstract: bool = False,
              name: str | None = None,
