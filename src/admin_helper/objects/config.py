@@ -7,10 +7,10 @@ from pathlib import Path
 from typing import Callable, Any, Iterator, Mapping, TYPE_CHECKING
 
 from admin_helper.exceptions import LoggerConfigurationError
-from admin_helper.field import DEFAULT_MASKED_FIELD_VALUE, DEFAULT_NOT_SET_FIELD_VALUE, DEFAULT_EMPTY_FIELD_VALUES
+from admin_helper.objects.field import DEFAULT_MASKED_FIELD_VALUE, DEFAULT_NOT_SET_FIELD_VALUE, DEFAULT_EMPTY_FIELD_VALUES
 
 if TYPE_CHECKING:
-    from admin_helper.logger import ObjectLogger
+    from admin_helper.objects.logger import ObjectLogger
 
 
 class LoggerConfigValue(Enum):
@@ -851,7 +851,7 @@ class ObjectLoggerConfig:
             Returns a value of type ``_ResolvedObjectLoggerConfig``.
         """
 
-        from admin_helper.logger import ObjectLogger
+        from admin_helper.objects.logger import ObjectLogger
 
         return _ResolvedObjectLoggerConfig(logger_class=ObjectLogger,
                                            parent=LoggerParent.OBJECT_PARENT,
@@ -936,7 +936,7 @@ class ObjectLoggerConfig:
             Returns None.
         """
 
-        from admin_helper.logger import ObjectLogger
+        from admin_helper.objects.logger import ObjectLogger
 
         if value is LoggerConfigValue.INHERIT:
             if name == "parent":

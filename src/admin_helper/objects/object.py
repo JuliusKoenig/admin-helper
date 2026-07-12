@@ -9,15 +9,15 @@ from contextlib import contextmanager
 from dataclasses import MISSING, dataclass, fields as dataclass_fields
 from typing import Any, TypeVar, overload
 
-from admin_helper.config import ObjectLoggerConfig, _ResolvedObjectLoggerConfig, ObjectStatus, SensitiveValueFilterMode, LoggerParent
 from admin_helper.exceptions import (BroadcastException,
                                      LoggerConfigurationError,
                                      ObjectTreeLoopError)
-from admin_helper.field import _field_info, field, fields
-from admin_helper.helper import _format_display_value, _masking_framework_config
-from admin_helper.logger import ObjectLogger, _get_object_logger
-from admin_helper.registry import object_registry, _construction_context
-from admin_helper.sensitive_value_registry import _sensitive_value_registry
+from admin_helper.objects.config import ObjectLoggerConfig, _ResolvedObjectLoggerConfig, ObjectStatus, SensitiveValueFilterMode, LoggerParent
+from admin_helper.objects.field import _field_info, field, fields
+from admin_helper.objects.helper import _format_display_value, _masking_framework_config
+from admin_helper.objects.logger import ObjectLogger, _get_object_logger
+from admin_helper.objects.registry import object_registry, _construction_context
+from admin_helper.objects.sensitive_value_registry import _sensitive_value_registry
 
 # Generic type variable used to preserve concrete BaseObject subclasses in the
 # public lookup, child-access, and decorator APIs.

@@ -6,9 +6,8 @@ from threading import RLock
 from collections.abc import Iterable
 from typing import Any, TYPE_CHECKING
 
-from admin_helper.config import SensitiveValueFilterMode
-
-from admin_helper.helper import _field_framework_config, _masking_framework_config
+from admin_helper.objects.config import SensitiveValueFilterMode
+from admin_helper.objects.helper import _field_framework_config, _masking_framework_config
 
 if TYPE_CHECKING:
     from admin_helper.objects import BaseObject

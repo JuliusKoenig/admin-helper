@@ -9,7 +9,6 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field as dataclass_field, fields as dataclass_fields
 from typing import Any, cast, overload, TypeVar, TYPE_CHECKING, Optional
 
-from admin_helper.config import ObjectRegistryConfig, RegistryConfigChange, LoggerParent, ObjectLoggerConfig, ObjectStatus
 from admin_helper.exceptions import (AmbiguousObjectNameError,
                                      DuplicateObjectNameError,
                                      DuplicateRegistrationNameError,
@@ -17,9 +16,10 @@ from admin_helper.exceptions import (AmbiguousObjectNameError,
                                      ParentResolutionError,
                                      RegistryError,
                                      UnregisteredSubclassError)
-from admin_helper.field import _field_info
-from admin_helper.logger import _get_object_logger, ObjectLogger
-from admin_helper.sensitive_value_registry import _SensitiveValueRegistry, _sensitive_value_registry
+from admin_helper.objects.config import ObjectRegistryConfig, RegistryConfigChange, LoggerParent, ObjectLoggerConfig, ObjectStatus
+from admin_helper.objects.field import _field_info
+from admin_helper.objects.logger import _get_object_logger, ObjectLogger
+from admin_helper.objects.sensitive_value_registry import _SensitiveValueRegistry, _sensitive_value_registry
 
 if TYPE_CHECKING:
     from admin_helper.objects import BaseObject

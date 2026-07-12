@@ -3,12 +3,12 @@ from enum import Enum
 from typing import Any, Iterable, TYPE_CHECKING, Union, overload, Literal, Callable, TypeVar, Mapping, dataclass_transform
 from dataclasses import fields as dataclass_fields, dataclass, field as dataclass_field
 
-from admin_helper.config import FieldFrameworkConfig, MaskingFrameworkConfig
-from admin_helper.field import _field_info, field
+from admin_helper.objects.config import FieldFrameworkConfig, MaskingFrameworkConfig
+from admin_helper.objects.field import _field_info, field
 
 if TYPE_CHECKING:
-    from admin_helper.registry import _ParentReference
-    from admin_helper.objects import BaseObject
+    from admin_helper.objects.registry import _ParentReference
+    from admin_helper.objects.object import BaseObject
 
 
 def _format_log_value(value: Any) -> str:
@@ -78,8 +78,8 @@ def is_abstract(obj: Union["BaseObject", type["BaseObject"], Any]) -> bool:
         Returns True when the condition is satisfied; otherwise, returns False.
     """
 
-    from admin_helper.objects import BaseObject
-    from admin_helper.registry import object_registry
+    from admin_helper.objects.object import BaseObject
+    from admin_helper.objects.registry import object_registry
 
     if isinstance(obj, type) and issubclass(obj, BaseObject):
         try:
@@ -216,8 +216,8 @@ def register(*,
         Returns the configured callable.
     """
 
-    from admin_helper.registry import object_registry
-    from admin_helper.objects import BaseObject
+    from admin_helper.objects.object import BaseObject
+    from admin_helper.objects.registry import object_registry
 
     def decorator(cls: type[_T]) -> type[_T]:
         # Restrict the decorator to the framework hierarchy.

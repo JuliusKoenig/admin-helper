@@ -5,19 +5,19 @@ import warnings
 from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Callable, Any, Iterator, Mapping, Union
+from typing import Callable, Any, Iterator, Mapping, Union, Optional
 
 from rich.logging import RichHandler
 
-from admin_helper.config import _ResolvedObjectLoggerConfig, ObjectStatus, _ResolvedLoggerContextConfig, _logger_context_stack, _LoggerContextFrame
+from admin_helper.objects.config import _ResolvedObjectLoggerConfig, ObjectStatus, _ResolvedLoggerContextConfig, _logger_context_stack, _LoggerContextFrame
 from admin_helper.console import AdminHelperConsole
 from admin_helper.exceptions import LoggerConfigurationError
-from admin_helper.helper import _format_log_value, _masking_framework_config
-from admin_helper.sensitive_value_registry import _sensitive_value_registry
+from admin_helper.objects.helper import _format_log_value, _masking_framework_config
+from admin_helper.objects.sensitive_value_registry import _sensitive_value_registry
 from admin_helper.warnings import SensitiveValueWarning
 
 
-class _ContextThresholdFilter(logging.Filter):
+class ContextThresholdFilter(logging.Filter):
     """Apply the active context threshold to one concrete output channel."""
 
     def __init__(self,
@@ -52,46 +52,77 @@ class _ContextThresholdFilter(logging.Filter):
         """
         return record.levelno >= self._logger._context_threshold(self._channel)
 
+class MaskedValueFilter(logging.Filter):
+    """Redact cached sensitive values before a managed handler formats them."""
+
+    def __init__(self, logger: Optional["ObjectLogger"] = None, channel: str = "custom") -> None:
+        super().__init__()
+        self._logger = logger
+        self._channel = channel
+
+    def filter(self,
+               record: logging.LogRecord) -> bool:
+        global_config = _masking_framework_config()
+        channel_enabled = {"console": global_config.console,
+                           "file": global_config.file,
+                           "custom": global_config.custom_handlers}.get(self._channel, global_config.enabled)
+        if not global_config.enabled or not channel_enabled:
+            return True
+        if self._logger is not None and not self._logger._masking_enabled(self._channel):
+            if global_config.enforced:
+                warnings.warn("A local logger configuration attempted to disable enforced sensitive-value masking.",
+                              SensitiveValueWarning,
+                              stacklevel=2)
+            else:
+                return True
+        record.msg = _sensitive_value_registry().sanitize(record.msg)
+        record.args = _sensitive_value_registry().sanitize(record.args)
+        if hasattr(record, "log_context_data"):
+            record.log_context_data = _sensitive_value_registry().sanitize(record.log_context_data)
+        if hasattr(record, "log_context_values"):
+            record.log_context_values = _sensitive_value_registry().sanitize(record.log_context_values)
+        return True
+
+class Formatter(logging.Formatter):
+    def format(self,
+               record: logging.LogRecord) -> str:
+        """
+        Execute the 'format' operation.
+
+        :param record:
+            The log record to inspect or format.
+
+        :return:
+            Returns a value of type ``str``.
+        """
+        if (hasattr(record, "markup")
+                and getattr(self._style, "_fmt", None) == "%(message)s"):
+            return record.getMessage()
+        return super().format(record)
+
+class ContextAwareFormatter(logging.Formatter):
+    """Select and cache a formatter based on the active logging context."""
+
+    def __init__(self,
+                 logger: "ObjectLogger",
+                 channel: str):
+        super().__init__()
+        self._logger = logger
+        self._channel = channel
+        self._cache: dict[str, Formatter] = {}
+
+    def format(self,
+               record: logging.LogRecord) -> str:
+        format_string = self._logger._context_format(self._channel)
+        formatter = self._cache.get(format_string)
+        if formatter is None:
+            formatter = Formatter(format_string)
+            self._cache[format_string] = formatter
+        return formatter.format(record)
+
 
 class ObjectLogger(logging.Logger):
     """Logger implementation used by every ``BaseObject``."""
-
-    class Formatter(logging.Formatter):
-        def format(self,
-                   record: logging.LogRecord) -> str:
-            """
-            Execute the 'format' operation.
-
-            :param record:
-                The log record to inspect or format.
-
-            :return:
-                Returns a value of type ``str``.
-            """
-            if (hasattr(record, "markup")
-                    and getattr(self._style, "_fmt", None) == "%(message)s"):
-                return record.getMessage()
-            return super().format(record)
-
-    class ContextAwareFormatter(logging.Formatter):
-        """Select and cache a formatter based on the active logging context."""
-
-        def __init__(self,
-                     logger: "ObjectLogger",
-                     channel: str):
-            super().__init__()
-            self._logger = logger
-            self._channel = channel
-            self._cache: dict[str, ObjectLogger.Formatter] = {}
-
-        def format(self,
-                   record: logging.LogRecord) -> str:
-            format_string = self._logger._context_format(self._channel)
-            formatter = self._cache.get(format_string)
-            if formatter is None:
-                formatter = ObjectLogger.Formatter(format_string)
-                self._cache[format_string] = formatter
-            return formatter.format(record)
 
     class TarRotatingFileHandler(RotatingFileHandler):
         def __init__(self,
@@ -427,8 +458,8 @@ class ObjectLogger(logging.Logger):
                                           show_path=config.console_rich_show_path)
             console_handler.set_name(self.name)
             console_handler.setLevel(logging.NOTSET)
-            console_handler.addFilter(_ContextThresholdFilter(self, "console"))
-            console_handler.setFormatter(self.ContextAwareFormatter(self, "console"))
+            console_handler.addFilter(ContextThresholdFilter(self, "console"))
+            console_handler.setFormatter(ContextAwareFormatter(self, "console"))
             configured_handlers.append(console_handler)
 
         if config.file and not config.disabled:
@@ -450,8 +481,8 @@ class ObjectLogger(logging.Logger):
                                                        delay=config.file_delay,
                                                        archive_backup_count=config.file_archive_backup_count)
             file_handler.setLevel(logging.NOTSET)
-            file_handler.addFilter(_ContextThresholdFilter(self, "file"))
-            file_handler.setFormatter(self.ContextAwareFormatter(self, "file"))
+            file_handler.addFilter(ContextThresholdFilter(self, "file"))
+            file_handler.setFormatter(ContextAwareFormatter(self, "file"))
             configured_handlers.append(file_handler)
 
         for factory in config.handler_factories:
@@ -459,15 +490,15 @@ class ObjectLogger(logging.Logger):
             if not isinstance(handler, logging.Handler):
                 raise LoggerConfigurationError(
                     "Every handler factory must return a logging.Handler instance.")
-            handler.addFilter(_ContextThresholdFilter(self, "logger"))
+            handler.addFilter(ContextThresholdFilter(self, "logger"))
             if config.formatter is not None:
                 handler.setFormatter(config.formatter)
             configured_handlers.append(handler)
 
         for handler in configured_handlers:
-            if not any(isinstance(filter_, _MaskedValueFilter)
+            if not any(isinstance(filter_, MaskedValueFilter)
                        for filter_ in handler.filters):
-                handler.addFilter(_MaskedValueFilter(self, "custom"))
+                handler.addFilter(MaskedValueFilter(self, "custom"))
             self.addHandler(handler)
             self._managed_handlers.append(handler)
         self._resolved_config = config
@@ -518,34 +549,5 @@ def _get_object_logger(name: str,
 
 
 
-class _MaskedValueFilter(logging.Filter):
-    """Redact cached sensitive values before a managed handler formats them."""
 
-    def __init__(self, logger: ObjectLogger | None = None, channel: str = "custom") -> None:
-        super().__init__()
-        self._logger = logger
-        self._channel = channel
-
-    def filter(self,
-               record: logging.LogRecord) -> bool:
-        global_config = _masking_framework_config()
-        channel_enabled = {"console": global_config.console,
-                           "file": global_config.file,
-                           "custom": global_config.custom_handlers}.get(self._channel, global_config.enabled)
-        if not global_config.enabled or not channel_enabled:
-            return True
-        if self._logger is not None and not self._logger._masking_enabled(self._channel):
-            if global_config.enforced:
-                warnings.warn("A local logger configuration attempted to disable enforced sensitive-value masking.",
-                              SensitiveValueWarning,
-                              stacklevel=2)
-            else:
-                return True
-        record.msg = _sensitive_value_registry().sanitize(record.msg)
-        record.args = _sensitive_value_registry().sanitize(record.args)
-        if hasattr(record, "log_context_data"):
-            record.log_context_data = _sensitive_value_registry().sanitize(record.log_context_data)
-        if hasattr(record, "log_context_values"):
-            record.log_context_values = _sensitive_value_registry().sanitize(record.log_context_values)
-        return True
 
