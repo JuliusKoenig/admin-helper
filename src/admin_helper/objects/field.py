@@ -225,7 +225,6 @@ def field(
         resolved_repr = False
         resolved_compare = False
         display = False
-        resolved_kw_only = True
 
     if masked and resolved_repr:
         if repr is not MISSING:
