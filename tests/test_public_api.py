@@ -27,9 +27,11 @@ def test_expected_public_api_is_exported() -> None:
         "dataclass",
         "field",
         "fields",
+        "get_default_application",
         "is_abstract",
         "object_registry",
         "register",
+        "set_default_application",
     }
 
     assert expected_names <= set(objects.__all__)

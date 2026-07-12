@@ -1,6 +1,11 @@
 """Public API for the hierarchical object framework."""
 
-from admin_helper.objects.application import Application, application
+from admin_helper.objects.application import (
+    Application,
+    application,
+    get_default_application,
+    set_default_application,
+)
 from admin_helper.objects.blueprint import Blueprint
 from admin_helper.objects.config import (
     FieldFrameworkConfig,
@@ -68,7 +73,9 @@ __all__ = [
     "dataclass",
     "field",
     "fields",
+    "get_default_application",
     "is_abstract",
     "object_registry",
     "register",
+    "set_default_application",
 ]

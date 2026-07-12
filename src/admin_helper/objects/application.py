@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any, Literal, TypeVar, dataclass_transform, overload
+from typing import Any, Literal, TypeVar, cast, dataclass_transform, overload
 
 from admin_helper.exceptions import BlueprintError, DuplicateBlueprintNameError
 from admin_helper.objects.blueprint import Blueprint, _BlueprintRegistration
@@ -12,9 +12,10 @@ from admin_helper.objects.field import field
 from admin_helper.objects.object import BaseObject
 from admin_helper.objects.registration import _register_with_registry
 from admin_helper.objects.registry import (
+    _get_default_object_registry,
     _ObjectRegistry,
     _ParentReference,
-    object_registry,
+    _set_default_object_registry,
 )
 
 _T = TypeVar("_T", bound=BaseObject)
@@ -339,5 +340,41 @@ class Application:
         return name in self._registry
 
 
-application = Application(_registry=object_registry)
-"""Default application backing the legacy module-level API."""
+_default_application = Application(_registry=_get_default_object_registry())
+
+
+def get_default_application() -> Application:
+    """Return the application used by module-level convenience APIs."""
+
+    return _default_application
+
+
+def set_default_application(application: Application) -> Application:
+    """Set the process-wide default application and return the previous one.
+
+    Existing imports of ``application``, ``object_registry``, and ``register``
+    remain valid because they resolve the active default lazily.
+    """
+
+    if not isinstance(application, Application):
+        raise TypeError("The default application must be an Application instance.")
+
+    global _default_application
+    previous = _default_application
+    _default_application = application
+    _set_default_object_registry(application._registry)
+    return previous
+
+
+class _DefaultApplicationProxy:
+    """Stable public handle delegating to the active default application."""
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(get_default_application(), name)
+
+    def __contains__(self, name: str) -> bool:
+        return name in get_default_application()
+
+
+application = cast(Application, _DefaultApplicationProxy())
+"""Stable handle for the active default application."""

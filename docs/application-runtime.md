@@ -4,7 +4,7 @@ This document records the agreed direction for turning the current static object
 
 ## Current implementation phase
 
-Phases 1 and 2 establish the public application boundary and declarative blueprint composition while intentionally preserving the existing static build behavior.
+Phases 1 through 3 establish the public application boundary and declarative blueprint composition while intentionally preserving the existing static build behavior.
 
 Implemented in Phase 1:
 
@@ -23,6 +23,14 @@ Implemented in Phase 2:
 - blueprint names, registration names, classes, cycles, and parent bindings are validated before registry mutation;
 - runtime objects retain no blueprint reference;
 - application-owned origin metadata can map a registered class back to its source blueprint.
+
+Implemented in Phase 3:
+
+- `get_default_application()` returns the concrete process-wide default runtime;
+- `set_default_application()` changes that runtime and returns the previous one;
+- already imported `application`, `object_registry`, and `register` handles resolve the active default lazily;
+- explicit `@app.register(...)` decorators remain permanently bound to their owning application;
+- switching the default also rebinds field formatting and sensitive-value runtime configuration.
 
 Blueprint inclusion currently closes after `build()`. Dynamic create, stop, destroy, event, scheduler, import-string, and plugin behavior remain future phases.
 
@@ -64,8 +72,16 @@ service = app.get_by_name("service")
 The default compatibility API remains:
 
 ```python
-from admin_helper.objects import application, object_registry, register
+from admin_helper.objects import (
+    application,
+    get_default_application,
+    object_registry,
+    register,
+    set_default_application,
+)
 ```
+
+The handles `application` and `object_registry` are stable proxies. Changing the default does not invalidate modules that imported them earlier.
 
 Future lifecycle operations are planned as distinct methods rather than one overloaded build operation:
 

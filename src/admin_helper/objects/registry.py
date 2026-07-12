@@ -1063,8 +1063,52 @@ class _ObjectRegistry:
         return normalized_name
 
 
-# The singleton is the supported entry point for lookups. Creating additional
-# registry instances is intentionally not part of the public API.
-object_registry = _ObjectRegistry(validate_all_subclasses=True)
-_bind_registry_config(object_registry.config)
-_bind_sensitive_value_registry(object_registry._sensitive_values)
+class _DefaultObjectRegistryProxy:
+    """Keep legacy registry imports bound to the active default application."""
+
+    def __init__(self, target: _ObjectRegistry) -> None:
+        self._target = target
+
+    @property
+    def _target_registry(self) -> _ObjectRegistry:
+        """Return the concrete registry backing the current default application."""
+
+        return self._target
+
+    def _set_target(self, target: _ObjectRegistry) -> None:
+        """Redirect all existing proxy references to another concrete registry."""
+
+        self._target = target
+        _bind_registry_config(target.config)
+        _bind_sensitive_value_registry(target._sensitive_values)
+
+    def __getattr__(self, name: str) -> object:
+        """Delegate registry attributes to the active concrete registry."""
+
+        return getattr(self._target, name)
+
+    def __contains__(self, name: str) -> bool:
+        """Delegate exact-name membership checks to the active registry."""
+
+        return name in self._target
+
+
+_initial_object_registry = _ObjectRegistry(validate_all_subclasses=True)
+_object_registry_proxy = _DefaultObjectRegistryProxy(_initial_object_registry)
+object_registry = cast(_ObjectRegistry, _object_registry_proxy)
+"""Stable legacy handle for the registry of the active default application."""
+
+
+def _get_default_object_registry() -> _ObjectRegistry:
+    """Return the concrete registry of the active default application."""
+
+    return _object_registry_proxy._target_registry
+
+
+def _set_default_object_registry(target: _ObjectRegistry) -> None:
+    """Redirect the stable legacy registry handle to another registry."""
+
+    _object_registry_proxy._set_target(target)
+
+
+_set_default_object_registry(_initial_object_registry)

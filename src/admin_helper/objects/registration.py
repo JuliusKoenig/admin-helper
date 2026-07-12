@@ -8,11 +8,7 @@ from typing import Any, Literal, TypeVar, dataclass_transform, overload
 
 from admin_helper.objects.field import _field_info, field, object_dataclass
 from admin_helper.objects.object import BaseObject
-from admin_helper.objects.registry import (
-    _ObjectRegistry,
-    _ParentReference,
-    object_registry,
-)
+from admin_helper.objects.registry import _ObjectRegistry, _ParentReference
 
 _TClass = TypeVar("_TClass", bound=type)
 _T = TypeVar("_T", bound=BaseObject)
@@ -29,8 +25,13 @@ def is_abstract(obj: BaseObject | type[BaseObject] | Any) -> bool:
     """Return whether a registered class or object is marked as abstract."""
 
     if isinstance(obj, type) and issubclass(obj, BaseObject):
+        from admin_helper.objects.application import get_default_application
+
         try:
-            registration = object_registry._get_registration_by_class(obj)
+            registration = (
+                get_default_application()
+                ._registry._get_registration_by_class(obj)
+            )
         except KeyError:
             return bool(getattr(obj, "_abstract", False))
         return registration.abstract
@@ -143,8 +144,10 @@ def register(
 ) -> Callable[[type[_T]], type[_T]]:
     """Transform and register a class in the default object application."""
 
+    from admin_helper.objects.application import get_default_application
+
     return _register_with_registry(
-        object_registry,
+        get_default_application()._registry,
         abstract=abstract,
         name=name,
         parent=parent,
