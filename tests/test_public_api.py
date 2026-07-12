@@ -14,6 +14,7 @@ def test_expected_public_api_is_exported() -> None:
     expected_names = {
         "Application",
         "BaseObject",
+        "Blueprint",
         "FieldInfo",
         "Formatter",
         "MaskedValueFilter",

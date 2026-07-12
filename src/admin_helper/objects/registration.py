@@ -57,6 +57,30 @@ def _validate_framework_field_names(cls: type[BaseObject]) -> None:
             )
 
 
+def _prepare_registration_class(
+    cls: type[_T],
+    *,
+    abstract: bool,
+    args: tuple[Any, ...],
+    kwargs: Mapping[str, Any] | None,
+) -> type[_T]:
+    """Validate and transform one class for registry or blueprint use."""
+
+    if not issubclass(cls, BaseObject):
+        raise TypeError(
+            f"{cls.__module__}.{cls.__qualname__} must be a subclass of "
+            f"{BaseObject.__name__}."
+        )
+    if abstract and (args or kwargs):
+        raise TypeError(
+            f"Abstract class {cls.__qualname__!r} cannot define constructor arguments."
+        )
+
+    dataclass_cls = dataclass(cls)
+    _validate_framework_field_names(dataclass_cls)
+    return dataclass_cls
+
+
 @overload
 def register(
     *,
@@ -89,20 +113,13 @@ def _register_with_registry(
     """Create a framework registration decorator bound to one registry."""
 
     def decorator(cls: type[_T]) -> type[_T]:
-        if not issubclass(cls, BaseObject):
-            raise TypeError(
-                f"{cls.__module__}.{cls.__qualname__} must be a subclass of "
-                f"{BaseObject.__name__}."
-            )
-
         constructor_kwargs = dict(kwargs or {})
-        if abstract and (args or constructor_kwargs):
-            raise TypeError(
-                f"Abstract class {cls.__qualname__!r} cannot define constructor arguments."
-            )
-
-        dataclass_cls = dataclass(cls)
-        _validate_framework_field_names(dataclass_cls)
+        dataclass_cls = _prepare_registration_class(
+            cls,
+            abstract=abstract,
+            args=args,
+            kwargs=constructor_kwargs,
+        )
         return registry._register(
             name=name or _default_object_name(dataclass_cls),
             cls=dataclass_cls,

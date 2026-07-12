@@ -53,6 +53,23 @@ class ObjectTreeLoopError(RegistryError):
 
 
 # ---------------------------------------------------------------------------
+# Blueprint exceptions
+# ---------------------------------------------------------------------------
+
+
+class BlueprintError(AdminHelperException):
+    """Base exception for blueprint declaration and inclusion errors."""
+
+
+class DuplicateBlueprintNameError(BlueprintError):
+    """Raised when different blueprints use one application-local name."""
+
+
+class BlueprintIncludeCycleError(BlueprintError):
+    """Raised when nested blueprint includes form a cycle."""
+
+
+# ---------------------------------------------------------------------------
 # Object-logger exceptions
 # ---------------------------------------------------------------------------
 

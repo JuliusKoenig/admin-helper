@@ -4,16 +4,29 @@ This document records the agreed direction for turning the current static object
 
 ## Current implementation phase
 
-Phase 1 introduces `Application` as the public facade around the existing internal object registry. This phase intentionally preserves existing behavior:
+Phases 1 and 2 establish the public application boundary and declarative blueprint composition while intentionally preserving the existing static build behavior.
 
-- registrations are still collected before the initial build;
+Implemented in Phase 1:
+
+- `Application` is the public facade around one internal object registry;
 - `build()` delegates to the existing `instantiate_all()` implementation;
 - the legacy module-level `register` decorator and `object_registry` remain available;
-- no dynamic create, stop, destroy, event, scheduler, or plugin behavior is introduced yet.
+- separately constructed applications own isolated definitions and runtime indexes.
 
-The default public `application` wraps the existing `object_registry`, so both APIs address the same definitions and runtime instances.
+Implemented in Phase 2:
 
-Phase 1 isolates registration records and lookup indexes for separately constructed `Application` instances. The existing formatting and sensitive-value runtime bindings are still global and remain bound to the default application; complete multi-application configuration isolation is deferred to a later runtime refactoring.
+- `Blueprint` stores named object definitions without creating runtime objects;
+- blueprints may include other blueprints recursively;
+- `Application.include_blueprint()` copies one complete definition graph into the application;
+- an optional include parent replaces the parent of every root definition in that graph;
+- include order is deterministic and shared blueprint identities are deduplicated;
+- blueprint names, registration names, classes, cycles, and parent bindings are validated before registry mutation;
+- runtime objects retain no blueprint reference;
+- application-owned origin metadata can map a registered class back to its source blueprint.
+
+Blueprint inclusion currently closes after `build()`. Dynamic create, stop, destroy, event, scheduler, import-string, and plugin behavior remain future phases.
+
+The default public `application` wraps the existing `object_registry`, so both APIs address the same definitions and runtime instances. Formatting and sensitive-value runtime bindings are still global and remain bound to the default application; complete multi-application configuration isolation is deferred to a later runtime refactoring.
 
 ## Target architecture
 
@@ -147,15 +160,15 @@ A `Blueprint` is a named, declarative transport container for object definitions
 - it is not a runtime object;
 - created objects retain no reference to the blueprint.
 
-An application includes a blueprint with an optional parent:
+An application includes a blueprint with an optional registration parent:
 
 ```python
-app.include_blueprint(services, parent=container)
+app.include_blueprint(services, parent=ServiceContainer)
 ```
 
-Root definitions from the blueprint are attached to the supplied parent. Without a parent they become application root objects. Internal parent relationships defined inside the blueprint remain intact.
+During the current pre-build phase, the parent uses the same class-or-name reference semantics as `register(parent=...)`. Root definitions from the complete resolved blueprint graph are attached to that parent. Without a parent they become application root objects. Internal parent relationships defined inside the blueprint remain intact.
 
-Blueprint inclusion must support deterministic ordering, duplicate detection, and cycle detection. Nested blueprints are flattened into application registrations.
+Blueprint inclusion is idempotent for the same blueprint identity and parent binding. Nested blueprints are resolved dependency-first, shared identities are included only once, and different blueprints may not use the same name inside one application. All blueprint and registration conflicts are checked before definitions are copied into the registry.
 
 The application may internally retain registration-origin metadata so diagnostics or convenience queries can identify definitions and objects originating from a blueprint. This is metadata owned by the application, not a reference stored on each object. A blueprint itself has no load/unload lifecycle and no `BlueprintInstance` is planned.
 
@@ -174,7 +187,7 @@ A future `Extension` is a separate concept containing plugin metadata such as na
 ## Planned implementation order
 
 1. Introduce `Application` as a facade around the existing registry.
-2. Add named, nestable `Blueprint` definitions and parent-aware inclusion.
+2. Add named, nestable `Blueprint` definitions and parent-aware inclusion. **Completed.**
 3. Introduce application and object lifecycle states plus validated transitions.
 4. Add dynamic object creation, stopping, recursive destruction, and shutdown.
 5. Add lifecycle hooks and the event system.

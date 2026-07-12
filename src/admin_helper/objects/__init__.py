@@ -1,6 +1,7 @@
 """Public API for the hierarchical object framework."""
 
 from admin_helper.objects.application import Application, application
+from admin_helper.objects.blueprint import Blueprint
 from admin_helper.objects.config import (
     FieldFrameworkConfig,
     LoggerConfigValue,
@@ -39,6 +40,7 @@ from admin_helper.objects.registry import object_registry
 __all__ = [
     "Application",
     "BaseObject",
+    "Blueprint",
     "ComputedFieldInfo",
     "ContextAwareFormatter",
     "ContextThresholdFilter",
