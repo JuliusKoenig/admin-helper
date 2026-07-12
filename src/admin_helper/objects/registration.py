@@ -8,7 +8,11 @@ from typing import Any, Literal, TypeVar, dataclass_transform, overload
 
 from admin_helper.objects.field import _field_info, field, object_dataclass
 from admin_helper.objects.object import BaseObject
-from admin_helper.objects.registry import _ParentReference, object_registry
+from admin_helper.objects.registry import (
+    _ObjectRegistry,
+    _ParentReference,
+    object_registry,
+)
 
 _TClass = TypeVar("_TClass", bound=type)
 _T = TypeVar("_T", bound=BaseObject)
@@ -73,8 +77,8 @@ def register(
 ) -> Callable[[type[_T]], type[_T]]: ...
 
 
-@dataclass_transform(field_specifiers=(field,))
-def register(
+def _register_with_registry(
+    registry: _ObjectRegistry,
     *,
     abstract: bool = False,
     name: str | None = None,
@@ -82,7 +86,7 @@ def register(
     args: tuple[Any, ...] = (),
     kwargs: Mapping[str, Any] | None = None,
 ) -> Callable[[type[_T]], type[_T]]:
-    """Transform and register a ``BaseObject`` subclass for delayed creation."""
+    """Create a framework registration decorator bound to one registry."""
 
     def decorator(cls: type[_T]) -> type[_T]:
         if not issubclass(cls, BaseObject):
@@ -99,7 +103,7 @@ def register(
 
         dataclass_cls = dataclass(cls)
         _validate_framework_field_names(dataclass_cls)
-        return object_registry._register(
+        return registry._register(
             name=name or _default_object_name(dataclass_cls),
             cls=dataclass_cls,
             abstract=abstract,
@@ -109,3 +113,24 @@ def register(
         )
 
     return decorator
+
+
+@dataclass_transform(field_specifiers=(field,))
+def register(
+    *,
+    abstract: bool = False,
+    name: str | None = None,
+    parent: _ParentReference = None,
+    args: tuple[Any, ...] = (),
+    kwargs: Mapping[str, Any] | None = None,
+) -> Callable[[type[_T]], type[_T]]:
+    """Transform and register a class in the default object application."""
+
+    return _register_with_registry(
+        object_registry,
+        abstract=abstract,
+        name=name,
+        parent=parent,
+        args=args,
+        kwargs=kwargs,
+    )

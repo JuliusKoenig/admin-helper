@@ -12,6 +12,7 @@ def test_expected_public_api_is_exported() -> None:
     Purpose: Verify the following behavior: expected public api is exported.
     """
     expected_names = {
+        "Application",
         "BaseObject",
         "FieldInfo",
         "Formatter",
@@ -20,6 +21,7 @@ def test_expected_public_api_is_exported() -> None:
         "ObjectLogger",
         "ObjectRegistryConfig",
         "SensitiveValueFilterMode",
+        "application",
         "computed_field",
         "dataclass",
         "field",
