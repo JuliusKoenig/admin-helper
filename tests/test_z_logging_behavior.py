@@ -71,6 +71,11 @@ def _flush(logger: logging.Logger) -> None:
 
 
 def test_file_logging_writes_levels_context_and_masked_values(tmp_path: Path) -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: file logging writes levels context and masked values.
+    """
     path = tmp_path / "object.log"
     contexts = ObjectLoggerContexts(
         {
@@ -102,6 +107,11 @@ def test_file_logging_writes_levels_context_and_masked_values(tmp_path: Path) ->
 def test_nested_logging_context_uses_most_specific_config_and_merges_values(
     tmp_path: Path,
 ) -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: nested logging context uses most specific config and merges values.
+    """
     path = tmp_path / "nested.log"
     contexts = ObjectLoggerContexts(
         {
@@ -129,6 +139,11 @@ def test_nested_logging_context_uses_most_specific_config_and_merges_values(
 
 
 def test_disabled_logging_context_suppresses_records(tmp_path: Path) -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: disabled logging context suppresses records.
+    """
     path = tmp_path / "disabled.log"
     contexts = ObjectLoggerContexts()
     contexts.disable("silent")
@@ -145,6 +160,11 @@ def test_disabled_logging_context_suppresses_records(tmp_path: Path) -> None:
 
 
 def test_file_rotation_retains_numbered_backups(tmp_path: Path) -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: file rotation retains numbered backups.
+    """
     path = tmp_path / "rotate.log"
     _, obj = _build_file_logger_registry(path, max_bytes=80, backup_count=2)
 
@@ -159,6 +179,11 @@ def test_file_rotation_retains_numbered_backups(tmp_path: Path) -> None:
 
 
 def test_file_rotation_archives_full_backup_sets(tmp_path: Path) -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: file rotation archives full backup sets.
+    """
     path = tmp_path / "archive.log"
     _, obj = _build_file_logger_registry(
         path,
@@ -180,6 +205,11 @@ def test_file_rotation_archives_full_backup_sets(tmp_path: Path) -> None:
 
 
 def test_masked_value_filter_sanitizes_standard_logger_messages_and_arguments() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: masked value filter sanitizes standard logger messages and arguments.
+    """
     stream = io.StringIO()
     handler = logging.StreamHandler(stream)
     handler.setFormatter(logging.Formatter("%(message)s"))
@@ -198,6 +228,11 @@ def test_masked_value_filter_sanitizes_standard_logger_messages_and_arguments() 
 
 
 def test_object_logger_masks_custom_handler_and_can_respect_local_disable() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: object logger masks custom handler and can respect local disable.
+    """
     stream = io.StringIO()
 
     def factory() -> logging.Handler:
@@ -243,6 +278,11 @@ def test_object_logger_masks_custom_handler_and_can_respect_local_disable() -> N
 
 
 def test_logger_parent_and_inherited_configuration_update_recursively() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: logger parent and inherited configuration update recursively.
+    """
     registry = _ObjectRegistry()
 
     @object_dataclass
@@ -297,6 +337,11 @@ def test_logger_parent_and_inherited_configuration_update_recursively() -> None:
 
 
 def test_explicit_logger_parent_variants_resolve_correctly() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: explicit logger parent variants resolve correctly.
+    """
     registry = _ObjectRegistry()
 
     @object_dataclass

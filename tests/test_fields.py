@@ -29,6 +29,11 @@ class ExampleFields:
 
 
 def test_field_metadata_controls_dataclass_flags() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: field metadata controls dataclass flags.
+    """
     definitions = {definition.name: definition for definition in fields(ExampleFields)}
     raw_fields = {
         definition.name: definition for definition in dataclass_fields(ExampleFields)
@@ -43,6 +48,11 @@ def test_field_metadata_controls_dataclass_flags() -> None:
 
 
 def test_fields_discovers_stored_and_computed_fields() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: fields discovers stored and computed fields.
+    """
     instance = ExampleFields()
     definitions = {definition.name: definition for definition in fields(instance)}
 
@@ -53,6 +63,11 @@ def test_fields_discovers_stored_and_computed_fields() -> None:
 
 
 def test_fields_can_filter_by_metadata() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: fields can filter by metadata.
+    """
     instance = ExampleFields()
 
     assert {item.name for item in fields(instance, display=True)} == {
@@ -65,11 +80,21 @@ def test_fields_can_filter_by_metadata() -> None:
 
 
 def test_reserved_metadata_key_is_rejected() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: reserved metadata key is rejected.
+    """
     with pytest.raises(ValueError, match="reserved"):
         field(metadata={"field_info": "invalid"})
 
 
 def test_internal_field_options_are_overridden_with_warnings() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: internal field options are overridden with warnings.
+    """
     with pytest.warns(FieldConfigurationWarning) as warnings:
         configured = field(
             internal=True,

@@ -50,6 +50,11 @@ def _build_lookup_registry() -> tuple[
 
 
 def test_registry_name_lookup_supports_full_and_every_unique_suffix_path() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: registry name lookup supports full and every unique suffix path.
+    """
     registry, Root, Branch, SpecializedBranch, Leaf = _build_lookup_registry()
     (root,) = registry.get_by_type(Root)
     branch = next(item for item in registry.get_by_type(Branch) if type(item) is Branch)
@@ -73,6 +78,11 @@ def test_registry_name_lookup_supports_full_and_every_unique_suffix_path() -> No
 
 
 def test_registry_wildcard_lookup_covers_segment_and_recursive_variants() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: registry wildcard lookup covers segment and recursive variants.
+    """
     registry, Root, Branch, SpecializedBranch, Leaf = _build_lookup_registry()
     root = registry.get_by_type(Root)[0]
     branch = registry.get_by_type(Branch)[0]
@@ -98,6 +108,11 @@ def test_registry_wildcard_lookup_covers_segment_and_recursive_variants() -> Non
 
 
 def test_object_child_navigation_supports_relative_and_absolute_paths() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: object child navigation supports relative and absolute paths.
+    """
     registry, Root, Branch, SpecializedBranch, Leaf = _build_lookup_registry()
     root = registry.get_by_type(Root)[0]
     branch = registry.get_by_type(Branch)[0]
@@ -123,6 +138,11 @@ def test_object_child_navigation_supports_relative_and_absolute_paths() -> None:
 
 
 def test_type_lookup_includes_subclasses_and_child_type_lookup_is_direct_only() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: type lookup includes subclasses and child type lookup is direct only.
+    """
     registry, Root, Branch, SpecializedBranch, Leaf = _build_lookup_registry()
     root = registry.get_by_type(Root)[0]
     branch = registry.get_by_type(Branch)[0]
@@ -138,6 +158,11 @@ def test_type_lookup_includes_subclasses_and_child_type_lookup_is_direct_only() 
 
 
 def test_parent_and_descendant_navigation_detects_corrupted_cycles() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: parent and descendant navigation detects corrupted cycles.
+    """
     registry, Root, Branch, SpecializedBranch, Leaf = _build_lookup_registry()
     root = registry.get_by_type(Root)[0]
     branch = registry.get_by_type(Branch)[0]

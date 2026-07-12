@@ -11,6 +11,11 @@ from admin_helper.objects.sensitive_value_registry import _sensitive_value_regis
 
 
 def test_helpers_use_registry_owned_configuration() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: helpers use registry owned configuration.
+    """
     object_registry.config.fields.masked_value = "<redacted>"
     object_registry.config.fields.not_set_value = "<unset>"
 
@@ -21,6 +26,11 @@ def test_helpers_use_registry_owned_configuration() -> None:
 
 
 def test_sensitive_values_use_registry_owned_cache() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: sensitive values use registry owned cache.
+    """
     cache = _sensitive_value_registry()
 
     assert cache is object_registry._sensitive_values
@@ -34,6 +44,11 @@ def test_sensitive_values_use_registry_owned_cache() -> None:
 
 
 def test_disabling_masking_is_observed_immediately() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: disabling masking is observed immediately.
+    """
     cache = _sensitive_value_registry()
     cache.register("very-secret-value")
     object_registry.config.logging.masking.enabled = False

@@ -63,6 +63,11 @@ def build_registry() -> None:
 
 
 def test_abstract_registration_is_publicly_detectable() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: abstract registration is publicly detectable.
+    """
     from admin_helper.objects import is_abstract
 
     assert is_abstract(AbstractService) is True
@@ -70,6 +75,11 @@ def test_abstract_registration_is_publicly_detectable() -> None:
 
 
 def test_registry_builds_expected_tree() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: registry builds expected tree.
+    """
     (app,) = object_registry.get_by_type(ExampleApplication)
     (service,) = object_registry.get_by_type(ExampleService)
     (worker,) = object_registry.get_by_type(ExampleWorker)
@@ -85,6 +95,11 @@ def test_registry_builds_expected_tree() -> None:
 
 
 def test_name_and_type_lookups_return_same_instances() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: name and type lookups return same instances.
+    """
     (service,) = object_registry.get_by_type(ExampleService)
 
     assert object_registry.get_by_name("test_app.service") is service
@@ -98,12 +113,22 @@ def test_name_and_type_lookups_return_same_instances() -> None:
 
 
 def test_unique_suffix_lookup_resolves_object() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: unique suffix lookup resolves object.
+    """
     (worker,) = object_registry.get_by_type(ExampleWorker)
 
     assert object_registry.get_by_name("worker") is worker
 
 
 def test_read_only_field_cannot_be_changed_after_initialization() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: read only field cannot be changed after initialization.
+    """
     (app,) = object_registry.get_by_type(ExampleApplication)
 
     with pytest.raises(AttributeError, match="read_only"):
@@ -111,11 +136,21 @@ def test_read_only_field_cannot_be_changed_after_initialization() -> None:
 
 
 def test_direct_instantiation_is_forbidden() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: direct instantiation is forbidden.
+    """
     with pytest.raises(RuntimeError, match="must be instantiated through"):
         ExampleService()
 
 
 def test_string_representation_masks_secret_and_includes_computed_field() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: string representation masks secret and includes computed field.
+    """
     (service,) = object_registry.get_by_type(ExampleService)
     rendered = str(service)
 
@@ -125,6 +160,11 @@ def test_string_representation_masks_secret_and_includes_computed_field() -> Non
 
 
 def test_broadcast_calls_method_on_descendants() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: broadcast calls method on descendants.
+    """
     (app,) = object_registry.get_by_type(ExampleApplication)
     (service,) = object_registry.get_by_type(ExampleService)
     (worker,) = object_registry.get_by_type(ExampleWorker)
@@ -139,6 +179,11 @@ def test_broadcast_calls_method_on_descendants() -> None:
 
 
 def test_broadcast_wraps_failures() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: broadcast wraps failures.
+    """
     (app,) = object_registry.get_by_type(ExampleApplication)
 
     with pytest.raises(BroadcastException):
@@ -146,6 +191,11 @@ def test_broadcast_wraps_failures() -> None:
 
 
 def test_framework_initialization_finishes_after_tree_attachment() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: framework initialization finishes after tree attachment.
+    """
     (app,) = object_registry.get_by_type(ExampleApplication)
     (service,) = object_registry.get_by_type(ExampleService)
 
@@ -156,6 +206,11 @@ def test_framework_initialization_finishes_after_tree_attachment() -> None:
 
 
 def test_object_local_child_navigation() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: object local child navigation.
+    """
     (app,) = object_registry.get_by_type(ExampleApplication)
     (service,) = object_registry.get_by_type(ExampleService)
     (worker,) = object_registry.get_by_type(ExampleWorker)
@@ -168,6 +223,11 @@ def test_object_local_child_navigation() -> None:
 
 
 def test_objects_from_different_registries_cannot_be_attached() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: objects from different registries cannot be attached.
+    """
     from admin_helper.objects.registry import _ObjectRegistry
 
     first_registry = _ObjectRegistry()
@@ -194,6 +254,11 @@ def test_objects_from_different_registries_cannot_be_attached() -> None:
 
 
 def test_failed_child_construction_leaves_no_tree_or_index_entry() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: failed child construction leaves no tree or index entry.
+    """
     from admin_helper.objects.registry import _ObjectRegistry
 
     registry = _ObjectRegistry()
@@ -229,6 +294,11 @@ def test_failed_child_construction_leaves_no_tree_or_index_entry() -> None:
 
 
 def test_runtime_index_rejects_ambiguous_suffix_and_deduplicates_wildcards() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: runtime index rejects ambiguous suffix and deduplicates wildcards.
+    """
     from admin_helper.exceptions import AmbiguousObjectNameError
     from admin_helper.objects.index import _ObjectIndex
 
@@ -250,6 +320,11 @@ def test_runtime_index_rejects_ambiguous_suffix_and_deduplicates_wildcards() -> 
 
 
 def test_reparenting_reindexes_complete_subtree() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: reparenting reindexes complete subtree.
+    """
     from admin_helper.objects.registry import _ObjectRegistry
 
     registry = _ObjectRegistry()
@@ -296,6 +371,11 @@ def test_reparenting_reindexes_complete_subtree() -> None:
 
 
 def test_failed_reparenting_preserves_tree_and_indexes() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: failed reparenting preserves tree and indexes.
+    """
     from admin_helper.exceptions import DuplicateObjectNameError
     from admin_helper.objects.registry import _ObjectRegistry
 
@@ -353,6 +433,11 @@ def test_failed_reparenting_preserves_tree_and_indexes() -> None:
 
 
 def test_registry_instances_have_isolated_runtime_indexes() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: registry instances have isolated runtime indexes.
+    """
     from admin_helper.objects.registry import _ObjectRegistry
 
     first_registry = _ObjectRegistry()

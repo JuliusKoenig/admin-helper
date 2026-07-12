@@ -6,6 +6,11 @@ from admin_helper.objects.sensitive_value_registry import _sensitive_value_regis
 
 
 def test_sensitive_value_reference_counting() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: sensitive value reference counting.
+    """
     cache = _sensitive_value_registry()
     cache.register("shared-secret")
     cache.register("shared-secret")
@@ -18,6 +23,11 @@ def test_sensitive_value_reference_counting() -> None:
 
 
 def test_nested_values_are_registered_and_sanitized() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: nested values are registered and sanitized.
+    """
     cache = _sensitive_value_registry()
     cache.register("abc123")
     cache.register("second-secret")
@@ -37,6 +47,11 @@ def test_nested_values_are_registered_and_sanitized() -> None:
 
 
 def test_disabled_mode_does_not_replace_registered_values() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: disabled mode does not replace registered values.
+    """
     cache = _sensitive_value_registry()
     cache.register("secret")
     object_registry.config.logging.masking.mode = SensitiveValueFilterMode.DISABLED

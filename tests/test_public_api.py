@@ -6,6 +6,11 @@ import admin_helper.objects as objects
 
 
 def test_expected_public_api_is_exported() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: expected public api is exported.
+    """
     expected_names = {
         "BaseObject",
         "FieldInfo",
@@ -29,6 +34,11 @@ def test_expected_public_api_is_exported() -> None:
 
 
 def test_public_dataclass_supports_framework_fields() -> None:
+    """Test description.
+
+    Created: 2026-07-12
+    Purpose: Verify the following behavior: public dataclass supports framework fields.
+    """
     @objects.dataclass
     class Configuration:
         token: str = objects.field(default="secret", masked=True)
