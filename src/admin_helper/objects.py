@@ -1,39 +1,22 @@
-"""
-Hierarchical dataclass registration and object-tree construction.
-
-The module provides a deliberately small public API:
-
-* ``register`` transforms and records ``BaseObject`` subclasses.
-* ``initialize_objects`` validates the complete definition graph and builds it.
-* ``object_registry`` offers read-oriented lookup and search operations.
-* ``BaseObject`` exposes safe tree navigation and controlled re-parenting.
-
-All implementation details that can corrupt registry state are private. Python
-privacy is conventional rather than enforced, but leading underscores and
-``__all__`` make the supported API explicit to users, IDEs, and documentation
-tools.
-"""
-
 from __future__ import annotations
 
 import logging
 import os
-import re
 
 from abc import ABC
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import MISSING, dataclass, field as dataclass_field, fields as dataclass_fields
-from typing import Any, TypeVar, dataclass_transform, overload, Literal
+from dataclasses import MISSING, dataclass, fields as dataclass_fields
+from typing import Any, TypeVar, overload
 
 from admin_helper.config import ObjectLoggerConfig, _ResolvedObjectLoggerConfig, ObjectStatus, SensitiveValueFilterMode, LoggerParent
-from admin_helper.exceptions import (    BroadcastException,
-    LoggerConfigurationError,
-    ObjectTreeLoopError)
+from admin_helper.exceptions import (BroadcastException,
+                                     LoggerConfigurationError,
+                                     ObjectTreeLoopError)
 from admin_helper.field import _field_info, field, fields
 from admin_helper.helper import _format_display_value, _masking_framework_config
 from admin_helper.logger import ObjectLogger, _get_object_logger
-from admin_helper.registry import object_registry, _ParentReference, _construction_context
+from admin_helper.registry import object_registry, _construction_context
 from admin_helper.sensitive_value_registry import _sensitive_value_registry
 
 # Generic type variable used to preserve concrete BaseObject subclasses in the
@@ -44,7 +27,6 @@ _T = TypeVar("_T", bound="BaseObject")
 # operations. The collection is private because callers must not mutate global
 # framework configuration directly.
 _BROADCAST_METHODS: list[str] = []
-
 
 
 @dataclass
@@ -660,175 +642,3 @@ class BaseObject(ABC):
                 return results
         finally:
             object.__setattr__(self, "_status", previous_status)
-
-
-# ---------------------------------------------------------------------------
-# Public helper functions and decorator
-# ---------------------------------------------------------------------------
-
-def is_abstract(obj: BaseObject | type[BaseObject] | Any) -> bool:
-    """
-    Return whether a registered class or object is marked as abstract.
-
-    :param obj:
-        The object to inspect or attach.
-
-    :return:
-        Returns True when the condition is satisfied; otherwise, returns False.
-    """
-
-    if isinstance(obj, type) and issubclass(obj, BaseObject):
-        try:
-            registration = object_registry._get_registration_by_class(obj)
-        except KeyError:
-            return bool(getattr(obj, "_abstract", False))
-        return registration.abstract
-
-    return bool(getattr(obj, "_abstract", False))
-
-
-def _default_object_name(cls: type[BaseObject]) -> str:
-    """
-    Convert a CamelCase class name into the default snake_case name.
-
-    :return:
-        Returns a value of type ``str``.
-    """
-
-    return re.sub(r"(?<!^)(?=[A-Z])", "_", cls.__name__).lower()
-
-
-def _validate_framework_field_names(cls: type[BaseObject]) -> None:
-    """Validate naming conventions required by framework field categories."""
-
-    for dataclass_field in dataclass_fields(cls):
-        if (_field_info(dataclass_field).internal
-                and not dataclass_field.name.startswith("_")):
-            raise TypeError(
-                f"Internal field '{dataclass_field.name}' on "
-                f"'{cls.__module__}.{cls.__qualname__}' must start with an underscore."
-            )
-
-
-@overload
-def register(*,
-             abstract: Literal[True],
-             name: str | None = None,
-             parent: _ParentReference = None) -> Callable[[type[_T]], type[_T]]:
-    """
-    Transform and register a ``BaseObject`` subclass as a dataclass.  Abstract registrations define reusable templates and are never instantiated. Concrete registrations may store constructor arguments and an optional parent reference. Actual construction is delayed until ``instantiate_all`` runs.
-
-    Examples:
-        @register(name='app')
-        class App(BaseObject):
-            ...
-
-    :param abstract:
-        Whether the registration defines an abstract template.
-
-    :param name:
-        The name to process.
-
-    :param parent:
-        The parent object, registration, or logger selector.
-
-    :return:
-        Returns the configured callable.
-    """
-
-    ...
-
-
-@overload
-def register(*,
-             abstract: Literal[False] = False,
-             name: str | None = None,
-             parent: _ParentReference = None,
-             args: tuple[Any, ...] = (),
-             kwargs: Mapping[str, Any] | None = None) -> Callable[[type[_T]], type[_T]]:
-    """
-    Transform and register a ``BaseObject`` subclass as a dataclass.  Abstract registrations define reusable templates and are never instantiated. Concrete registrations may store constructor arguments and an optional parent reference. Actual construction is delayed until ``instantiate_all`` runs.
-
-    Examples:
-        @register(name='app')
-        class App(BaseObject):
-            ...
-
-    :param abstract:
-        Whether the registration defines an abstract template.
-
-    :param name:
-        The name to process.
-
-    :param parent:
-        The parent object, registration, or logger selector.
-
-    :param args:
-        The positional constructor arguments stored for delayed creation.
-
-    :param kwargs:
-        The keyword constructor arguments stored for delayed creation.
-
-    :return:
-        Returns the configured callable.
-    """
-
-    ...
-
-
-@dataclass_transform(field_specifiers=(field, dataclass_field))
-def register(*,
-             abstract: bool = False,
-             name: str | None = None,
-             parent: _ParentReference = None,
-             args: tuple[Any, ...] = (),
-             kwargs: Mapping[str, Any] | None = None) -> Callable[[type[_T]], type[_T]]:
-    """
-    Transform and register a ``BaseObject`` subclass as a dataclass.  Abstract registrations define reusable templates and are never instantiated. Concrete registrations may store constructor arguments and an optional parent reference. Actual construction is delayed until ``instantiate_all`` runs.
-
-    Examples:
-        @register(name='app')
-        class App(BaseObject):
-            ...
-
-    :param abstract:
-        Whether the registration defines an abstract template.
-
-    :param name:
-        The name to process.
-
-    :param parent:
-        The parent object, registration, or logger selector.
-
-    :param args:
-        The positional constructor arguments stored for delayed creation.
-
-    :param kwargs:
-        The keyword constructor arguments stored for delayed creation.
-
-    :return:
-        Returns the configured callable.
-    """
-
-    def decorator(cls: type[_T]) -> type[_T]:
-        # Restrict the decorator to the framework hierarchy.
-        if not issubclass(cls, BaseObject):
-            raise TypeError(f"{cls.__module__}.{cls.__qualname__} must be a subclass of {BaseObject.__name__}.")
-
-        # Copy caller-owned mappings and validate abstract template semantics.
-        constructor_kwargs = dict(kwargs or {})
-        if abstract and (args or constructor_kwargs):
-            raise TypeError(f"Abstract class {cls.__qualname__!r} cannot define constructor arguments.")
-
-        # Apply the runtime dataclass transformation, then record its delayed
-        # construction metadata in the singleton registry.
-        dataclass_cls = dataclass(cls)
-        _validate_framework_field_names(dataclass_cls)
-        return object_registry._register(name=name or _default_object_name(dataclass_cls),
-                                         cls=dataclass_cls,
-                                         abstract=abstract,
-                                         parent=parent,
-                                         constructor_args=args,
-                                         constructor_kwargs=constructor_kwargs)
-
-    return decorator
